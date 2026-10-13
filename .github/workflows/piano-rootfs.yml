@@ -114,9 +114,9 @@ on:
         options: ['custom_build', 'prebuilt']
         default: 'custom_build'
       kernel_repo:
-        description: '内核仓库'
+        description: '内核仓库（owner/repo 格式；自定义内核时填自己的，完整 URL 也可）'
         type: string
-        default: 'https://github.com/blu-sharky/linux-piano'
+        default: 'blu-sharky/linux-piano'
       kernel_branch:
         description: '内核分支'
         type: string
@@ -350,10 +350,20 @@ jobs:
       - uses: actions/checkout@v5
         with: { persist-credentials: false }
 
+      - name: Normalize kernel repo (accept owner/repo or full URL)
+        env:
+          KERNEL_REPO_INPUT: ${{ inputs.kernel_repo }}
+        run: |
+          # actions/checkout 的 repository: 只要 owner/repo；用户贴完整 URL 时归一化。
+          repo="${KERNEL_REPO_INPUT#https://github.com/}"
+          repo="${repo#http://github.com/}"
+          repo="${repo%.git}"
+          echo "KERNEL_REPO=$repo" >> "$GITHUB_ENV"
+
       - name: Checkout kernel source
         uses: actions/checkout@v5
         with:
-          repository: ${{ inputs.kernel_repo }}
+          repository: ${{ env.KERNEL_REPO }}
           ref: ${{ inputs.kernel_branch }}
           path: workspace/linux-piano
           persist-credentials: false
@@ -481,7 +491,7 @@ jobs:
 
       - name: Compiler cache statistics
         if: always()
-        run: ccache --show-stats
+        run: ccache --show-stats || true
 
       - name: Prune this ref's older compiler caches
         if: always()
