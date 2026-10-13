@@ -1,0 +1,4 @@
+# 按文件名字典序应用；git apply --check 先行（fail-closed fuzz=0），
+# 并在 kernel-release 内做一次受影响目录的本地编译（ADR-0006 准入第 5 条）。
+0001-media-iris-enable-decode-order-output-and-deblocking.patch
+0002-media-iris-declare-iris_set_deblock_gen2.patch

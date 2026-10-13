@@ -1,0 +1,8 @@
+# Kernel baseline (ADR-0006: 基线 + 补丁集)
+# 基线不 fork：kernel-release 直接 checkout 上游 pin，再按 series 打补丁。
+repo_url:  https://github.com/blu-sharky/linux-piano
+ref:       piano-7.2.6
+commit:    352508459733d3e6d349ea5581a8dd2fd8bb4180
+version:   7.2.6
+defconfig: piano_defconfig
+fragment:  arch/arm64/configs/piano_rootfs.config   # merged after defconfig (upstream recipe)
