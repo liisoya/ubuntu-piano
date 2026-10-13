@@ -28,11 +28,18 @@ Advanced Configuration），内核/驱动/组件采用 `blu-sharky` 的 piano �
 | 用户名 / 密码 | piano / piano | SSH 默认同此密码 |
 | ssh_auth | password | keys-only = 仅密钥 |
 | 语言 / 时区 | zh_CN.UTF-8 / Asia/Shanghai | |
-| extras | fcitx5 + 压缩工具 | 另有 browser（chrome/firefox）、dev-tools、docker |
+| extras | `fcitx5,compression,video-accel` | 见下方片段清单；逗号分隔，加选项 = 加文件 |
 | 内核来源 | custom_build（源码） | prebuilt 待外部 ramdisk 路径支持 |
 
-extras 是数据驱动的：`rootfs/extras.d/<name>.list`（包清单）+ 可选 `<name>.sh` 钩子，
-加一个选项 = 加一个文件，构建脚本不改。
+extras 是数据驱动的：`debian-piano/rootfs/extras.d/<name>.list`（包清单）+
+可选 `<name>.sh`（chroot 前置钩子）/ `<name>.post.sh`（后置钩子，所有包装机与
+overlay 之后运行）/ `<name>.post-src/`（钩子取用的内置源码），加一个选项 =
+加文件，workflow 与构建脚本不改。
+
+当前可用片段：`fcitx5`（默认）、`compression`（默认）、`video-accel`
+（VA-API 视频硬解，2026-10-14 真机验证：ffmpeg 硬解 CPU -57%、
+Chrome chrome://gpu Video Decode/Encode = Hardware accelerated）、
+`browser-chrome`、`browser-firefox`、`dev-tools`、`docker`。
 
 ## 内核策略（ADR-0006）
 
