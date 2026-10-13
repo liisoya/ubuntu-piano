@@ -178,8 +178,14 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends docker.io python3 udev
+          # runner 镜像自带 docker（moby）：不要装 docker.io，会与预装版本冲突
+          # （E: pkgProblemResolver::Resolve generated breaks，冒烟 run 38425024510 实证）
+          command -v docker >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends docker.io
+          }
+          docker version
+          sudo apt-get install -y --no-install-recommends python3
 
       - name: Build Mesa (resolute variant, vendored piano-mesa)
         run: |
