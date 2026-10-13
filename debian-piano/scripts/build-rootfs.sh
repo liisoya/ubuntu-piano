@@ -18,11 +18,34 @@ while [ $# -gt 0 ]; do
         --authorized-keys) KEYS=$(realpath "${2:?}"); shift 2 ;;
         --userspace-dir) USERSPACE_DIR=$(realpath "${2:?}"); shift 2 ;;
         --mesa-dir) MESA_DIR=$(realpath "${2:?}"); shift 2 ;;
-        -h|--help) echo 'Usage: build-rootfs.sh --suite resolute --output DIR [--authorized-keys FILE] [--userspace-dir DIR] [--mesa-dir DIR]'; exit 0 ;;
+        # Advanced Configuration（spec §3）：显式 flag 传递，避免 sudo 丢 env
+        --username) PIANO_USERNAME=${2:?}; shift 2 ;;
+        --password) PIANO_PASSWORD=${2:?}; shift 2 ;;
+        --hostname) PIANO_HOSTNAME=${2:?}; shift 2 ;;
+        --language) PIANO_LANGUAGE=${2:?}; shift 2 ;;
+        --timezone) PIANO_TIMEZONE=${2:?}; shift 2 ;;
+        --ssh-auth) PIANO_SSH_AUTH=${2:?}; shift 2 ;;
+        --desktop) PIANO_DESKTOP=${2:?}; shift 2 ;;
+        --extras) PIANO_EXTRAS=${2:?}; shift 2 ;;
+        -h|--help) echo 'Usage: build-rootfs.sh --suite resolute --output DIR [--authorized-keys FILE] [--userspace-dir DIR] [--mesa-dir DIR] [--username U] [--password P] [--hostname H] [--language L] [--timezone T] [--ssh-auth password|keys-only] [--desktop "KDE Plasma"] [--extras "fcitx5 compression"]'; exit 0 ;;
         *) die "unknown option $1" ;;
     esac
 done
 [ "$SUITE" = resolute ] || die 'this desktop profile supports resolute (Ubuntu 26.04) only'
+# 身份/本地化/SSH/extras 由 workflow 的 Advanced Configuration 输入经 env 传入
+# （ADR-0005 / spec §3）。桌面本期只做 KDE：GNOME/server 是未接线选项，fail-closed。
+[ "${PIANO_DESKTOP:-KDE Plasma}" = "KDE Plasma" ] || \
+    die "PIANO_DESKTOP='${PIANO_DESKTOP}' is not wired yet (D8: only KDE Plasma is built today)"
+PIANO_USERNAME=${PIANO_USERNAME:-piano}
+PIANO_PASSWORD=${PIANO_PASSWORD:-piano}
+PIANO_HOSTNAME=${PIANO_HOSTNAME:-piano}
+PIANO_SSH_AUTH=${PIANO_SSH_AUTH:-password}
+PIANO_TIMEZONE=${PIANO_TIMEZONE:-Asia/Shanghai}
+if [ "${PIANO_LANGUAGE:-zh_CN.UTF-8}" = "None (C.UTF-8)" ]; then
+    PIANO_LANG=C.UTF-8
+else
+    PIANO_LANG=${PIANO_LANGUAGE:-zh_CN.UTF-8}
+fi
 [ -n "$OUTDIR" ] || die '--output is required'
 [ "$(id -u)" = 0 ] || die 'run with sudo (debootstrap and chroot mounts require root)'
 for tool in debootstrap chroot curl ssh-keygen openssl mount umount; do
@@ -113,6 +136,19 @@ install -m 0644 "$REPO/apt/kisak-mesa.asc" "$ROOTFS/etc/apt/keyrings/kisak-mesa.
 printf 'deb [signed-by=/etc/apt/keyrings/kisak-mesa.asc] https://ppa.launchpadcontent.net/kisak/kisak-mesa/ubuntu resolute main\n' \
     > "$ROOTFS/etc/apt/sources.list.d/kisak-mesa.list"
 mapfile -t PKGS < <(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$REPO/rootfs/packages.txt")
+# extras：数据驱动片段（rootfs/extras.d/<name>.list + 可选 <name>.sh 钩子）。
+# 加一个个性化选项 = 加一个文件，本脚本不改（spec §3.5）。
+for extra in ${PIANO_EXTRAS:-}; do
+    list="$REPO/rootfs/extras.d/$extra.list"
+    [ -f "$list" ] || die "unknown extras fragment: $extra (expected $list)"
+    mapfile -t -O "${#PKGS[@]}" PKGS < <(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$list")
+    hook="$REPO/rootfs/extras.d/$extra.sh"
+    if [ -f "$hook" ]; then
+        install -m 0755 "$hook" "$ROOTFS/tmp/piano-extra-$extra.sh"
+        chroot "$ROOTFS" "/tmp/piano-extra-$extra.sh"
+        rm -f "$ROOTFS/tmp/piano-extra-$extra.sh"
+    fi
+done
 chroot "$ROOTFS" apt-get update
 chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${PKGS[@]}"
 # Ubuntu has no trixie-backports analogue; resolute's base (kernel/userland)
@@ -175,25 +211,36 @@ chroot "$ROOTFS" apt-get autoremove -y --purge
 # The checkout belongs to the building user; the rootfs must stay root-owned.
 cp -a --no-preserve=ownership "$REPO/rootfs/overlay/." "$ROOTFS/"
 find "$ROOTFS/usr/lib/piano" "$ROOTFS/usr/local/bin" -type f -exec chmod 0755 {} +
-chroot "$ROOTFS" useradd -m -s /bin/bash -G sudo,audio,video,input,render piano
-PASSWORD=$(openssl rand -base64 18)
-printf 'piano:%s\n' "$PASSWORD" | chroot "$ROOTFS" chpasswd
+chroot "$ROOTFS" useradd -m -s /bin/bash -G sudo,audio,video,input,render "$PIANO_USERNAME"
+# A12：密码由用户指定（默认 piano，用户装完自行修改），不再随机生成。
+printf '%s:%s\n' "$PIANO_USERNAME" "$PIANO_PASSWORD" | chroot "$ROOTFS" chpasswd
 chroot "$ROOTFS" passwd -l root
-(umask 077; printf 'User: piano\nPassword: %s\nKDE Plasma (SDDM) autologin is enabled. SSH uses keys only.\n' "$PASSWORD" > "$OUTDIR/login.txt")
-for home in root home/piano; do
+(umask 077; printf 'User: %s\nPassword: %s\nKDE Plasma (SDDM) autologin is enabled. SSH auth: %s\n' \
+    "$PIANO_USERNAME" "$PIANO_PASSWORD" "$PIANO_SSH_AUTH" > "$OUTDIR/login.txt")
+for home in root "home/$PIANO_USERNAME"; do
     install -d -m 0700 "$ROOTFS/$home/.ssh"
     install -m 0600 "$KEYS" "$ROOTFS/$home/.ssh/authorized_keys"
 done
-chroot "$ROOTFS" chown -R piano:piano /home/piano
-printf 'piano\n' > "$ROOTFS/etc/hostname"
-printf '127.0.0.1 localhost\n127.0.1.1 piano\n::1 localhost ip6-localhost\n' > "$ROOTFS/etc/hosts"
+chroot "$ROOTFS" chown -R "$PIANO_USERNAME:$PIANO_USERNAME" "/home/$PIANO_USERNAME"
+printf '%s\n' "$PIANO_HOSTNAME" > "$ROOTFS/etc/hostname"
+printf '127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost\n' "$PIANO_HOSTNAME" > "$ROOTFS/etc/hosts"
 printf 'en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n' > "$ROOTFS/etc/locale.gen"
 chroot "$ROOTFS" locale-gen
-printf 'LANG=zh_CN.UTF-8\n' > "$ROOTFS/etc/default/locale"
-# Chinese workflow: Asia/Shanghai timezone (pattern from Droidspaces zh_tz).
-chroot "$ROOTFS" ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-echo 'Asia/Shanghai' > "$ROOTFS/etc/timezone"
+printf 'LANG=%s\n' "$PIANO_LANG" > "$ROOTFS/etc/default/locale"
+chroot "$ROOTFS" ln -sf "/usr/share/zoneinfo/$PIANO_TIMEZONE" /etc/localtime
+echo "$PIANO_TIMEZONE" > "$ROOTFS/etc/timezone"
 chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive tzdata
+# SSH 认证方式（A12）：password = 与用户密码一致（照顾小白）；keys-only = 仅密钥。
+# 两种方式都会装入构建生成的 ed25519 公钥（password 模式下作为备用自动化通道）。
+case "$PIANO_SSH_AUTH" in
+    password)
+        printf 'PasswordAuthentication yes\nPermitRootLogin no\n' \
+            > "$ROOTFS/etc/ssh/sshd_config.d/20-piano-auth.conf" ;;
+    keys-only)
+        printf 'PasswordAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin no\n' \
+            > "$ROOTFS/etc/ssh/sshd_config.d/20-piano-auth.conf" ;;
+    *) die "PIANO_SSH_AUTH must be password or keys-only (got '$PIANO_SSH_AUTH')" ;;
+esac
 chroot "$ROOTFS" systemctl enable NetworkManager ssh bluetooth piano-usb piano-touch piano-radio piano-adsp piano-audio piano-video piano-camera piano-camerad piano-keyboard piano-cpufreq piano-hostkeys piano-swapfile
 chroot "$ROOTFS" systemctl set-default graphical.target
 ln -sf /usr/lib/systemd/system/sddm.service "$ROOTFS/etc/systemd/system/display-manager.service"

@@ -1,0 +1,5 @@
+# extras: 常用压缩/归档工具（默认开启）
+zip
+unzip
+p7zip-full
+file-roller

@@ -24,12 +24,22 @@ usage() { sed -n '2,30p' "$0"; exit 2; }
 die() { echo "build-piano: error: $*" >&2; exit 1; }
 
 STAGE=all JOBS=$(nproc) OUTPUT='' BASE='' KEYS='' SIZE=8G
+# Advanced Configuration（spec §3）：由 workflow 输入经 flag 传入，转发给 build-rootfs.sh
+USERNAME='' PASSWORD='' HOSTNAME='' LANGUAGE='' TIMEZONE='' SSH_AUTH='' DESKTOP='' EXTRAS=''
 KERNEL_TREE='' FW_TREE='' MESA_DIR='' SENSORS_DIR='' TOPOLOGY='' LOOPBACK=''
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --stage) STAGE=${2:?}; shift 2 ;;
         --jobs) JOBS=${2:?}; shift 2 ;;
+        --username) USERNAME=${2:?}; shift 2 ;;
+        --password) PASSWORD=${2:?}; shift 2 ;;
+        --hostname) HOSTNAME=${2:?}; shift 2 ;;
+        --language) LANGUAGE=${2:?}; shift 2 ;;
+        --timezone) TIMEZONE=${2:?}; shift 2 ;;
+        --ssh-auth) SSH_AUTH=${2:?}; shift 2 ;;
+        --desktop) DESKTOP=${2:?}; shift 2 ;;
+        --extras) EXTRAS=${2:?}; shift 2 ;;
         --output) OUTPUT=$(realpath -m "${2:?}"); shift 2 ;;
         --rootfs-build) BASE=$(realpath "${2:?}"); shift 2 ;;
         --authorized-keys) KEYS=$(realpath "${2:?}"); shift 2 ;;
@@ -134,14 +144,19 @@ stage_rootfs() {
     if [ -z "$BASE" ]; then
         BASE=$OUTPUT/rootfs-build
         "${ROOT[@]}" "$D/scripts/build-rootfs.sh" --suite resolute --output "$BASE" --authorized-keys "$KEYS" \
-            ${MESA_DIR:+--mesa-dir "$MESA_DIR"} ${SENSORS_DIR:+--userspace-dir "$SENSORS_DIR"}
+            ${MESA_DIR:+--mesa-dir "$MESA_DIR"} ${SENSORS_DIR:+--userspace-dir "$SENSORS_DIR"} \
+            ${USERNAME:+--username "$USERNAME"} ${PASSWORD:+--password "$PASSWORD"} \
+            ${HOSTNAME:+--hostname "$HOSTNAME"} ${LANGUAGE:+--language "$LANGUAGE"} \
+            ${TIMEZONE:+--timezone "$TIMEZONE"} ${SSH_AUTH:+--ssh-auth "$SSH_AUTH"} \
+            ${DESKTOP:+--desktop "$DESKTOP"} ${EXTRAS:+--extras "$EXTRAS"}
     fi
     [ -f "$BASE/COMPLETE" ] || die 'Rootfs bootstrap incomplete'
     # A reused base gets the same key as the new rescue image.
-    for home in root home/piano; do
+    RB_USER=${USERNAME:-piano}
+    for home in root "home/$RB_USER"; do
         "${ROOT[@]}" install -m 0600 "$KEYS" "$BASE/rootfs/$home/.ssh/authorized_keys"
     done
-    "${ROOT[@]}" chroot "$BASE/rootfs" chown -R piano:piano /home/piano/.ssh
+    "${ROOT[@]}" chroot "$BASE/rootfs" chown -R "$RB_USER:$RB_USER" "/home/$RB_USER/.ssh"
     echo "build-piano: rootfs OK ($BASE)"
 }
 

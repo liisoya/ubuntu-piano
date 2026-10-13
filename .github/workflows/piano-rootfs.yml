@@ -267,16 +267,30 @@ jobs:
       - name: Build rootfs tree (ci/build.sh --stage rootfs)
         env:
           SSH_PUBLIC_KEY: ${{ vars.PIANO_SSH_PUBLIC_KEY }}
-          PIANO_USERNAME: ${{ inputs.username }}
-          PIANO_PASSWORD: ${{ inputs.password }}
         run: |
           mkdir -p out/image
+          # extras 由布尔输入拼成片段名列表（数据驱动：rootfs/extras.d/<name>.list）
+          extras=""
+          [ "${{ inputs.extra_fcitx5 }}" = true ] && extras="$extras fcitx5"
+          [ "${{ inputs.extra_compression }}" = true ] && extras="$extras compression"
+          [ "${{ inputs.browser }}" = chrome ] && extras="$extras browser-chrome"
+          [ "${{ inputs.browser }}" = firefox ] && extras="$extras browser-firefox"
+          [ "${{ inputs.extra_dev_tools }}" = true ] && extras="$extras dev-tools"
+          [ "${{ inputs.extra_docker }}" = true ] && extras="$extras docker"
           # 约定：本 job 只产 rootfs 树（含 COMPLETE 与 build-manifest），
           # kernel-images job 下载后原样恢复，脚本契约不变。
           bash -x ci/build.sh --stage rootfs \
               --kernel-tree . \
               --mesa-dir out/components/mesa/runtime \
               --sensors-dir out/components/userspace \
+              --username "${{ inputs.username }}" \
+              --password "${{ inputs.password }}" \
+              --hostname "${{ inputs.hostname }}" \
+              --language "${{ inputs.language }}" \
+              --timezone "${{ inputs.timezone }}" \
+              --ssh-auth "${{ inputs.ssh_auth }}" \
+              --desktop "${{ inputs.desktop }}" \
+              --extras "$extras" \
               --output out/image
 
       - name: Package rootfs tree

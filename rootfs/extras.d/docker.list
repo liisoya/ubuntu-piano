@@ -1,0 +1,5 @@
+# extras: Docker（默认关闭；input extra_docker=true 启用）
+# 注意：容器内运行依赖内核 cgroup/namespace 配置，piano 主线内核已具备；
+# 若后续启用 Waydroid（ticket 31）需评估二者并存。
+docker.io
+docker-compose-plugin

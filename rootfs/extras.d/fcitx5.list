@@ -1,0 +1,7 @@
+# extras: Fcitx 5 中文输入法（默认开启）
+# 说明：KDE Plasma 下经 /etc/environment 的 IM 变量与 /etc/xdg 配置接好；
+# 与 maliit 屏幕键盘并存（maliit 属基础包，不在此片段）。
+fcitx5
+fcitx5-chinese-addons
+fcitx5-frontend-qt6
+fcitx5-config-qt

@@ -1,0 +1,8 @@
+# extras: 开发工具（默认关闭；input extra_dev_tools=true 启用）
+build-essential
+cmake
+ninja-build
+python3-pip
+python3-venv
+gdb
+pkg-config
