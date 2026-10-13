@@ -31,6 +31,10 @@ while [ $# -gt 0 ]; do
         *) die "unknown option $1" ;;
     esac
 done
+# extras 片段名列表归一化：接受逗号或空格分隔（workflow 的 extras input 是
+# 逗号分隔字符串，本地调用习惯用空格）。统一成空格分隔，供下面 pre/post
+# 两个钩子循环按词迭代——否则 'a,b,c' 会被当成单个片段名。
+PIANO_EXTRAS=$(printf '%s' "${PIANO_EXTRAS:-}" | tr ',' ' ')
 [ "$SUITE" = resolute ] || die 'this desktop profile supports resolute (Ubuntu 26.04) only'
 # 身份/本地化/SSH/extras 由 workflow 的 Advanced Configuration 输入经 env 传入
 # （ADR-0005 / spec §3）。桌面本期只做 KDE：GNOME/server 是未接线选项，fail-closed。
