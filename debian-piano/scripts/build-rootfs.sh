@@ -220,6 +220,27 @@ chroot "$ROOTFS" apt-get autoremove -y --purge
 # The checkout belongs to the building user; the rootfs must stay root-owned.
 cp -a --no-preserve=ownership "$REPO/rootfs/overlay/." "$ROOTFS/"
 find "$ROOTFS/usr/lib/piano" "$ROOTFS/usr/local/bin" -type f -exec chmod 0755 {} +
+# extras 后置钩子：所有包装机 + overlay + piano-mesa 之后运行（补丁已安装应用的
+# desktop 文件、依赖 vendor Mesa 在位的用户态构建等）。pre 钩子跑在包装机之前，
+# 满足不了这两类需求，故有 post 钩子。数据驱动：extras.d/<name>.post.sh +
+# 可选 extras.d/<name>.post-src/（拷入 chroot 的 /tmp/piano-extra-<name>-src/）。
+# 位置约束（run 38479033579 的教训）：必须在下面 resolv.conf → NetworkManager
+# 符号链接替换之前——替换后 chroot 内 DNS 失效，钩子里的 apt 会
+# 'Temporary failure resolving'。也不要挪到 useradd 之后：本位置对
+# 包/overlay/Mesa 均已就位，用户创建不影响现有钩子。
+for extra in ${PIANO_EXTRAS:-}; do
+    post="$REPO/rootfs/extras.d/$extra.post.sh"
+    [ -f "$post" ] || continue
+    install -m 0755 "$post" "$ROOTFS/tmp/piano-extra-$extra-post.sh"
+    src="$REPO/rootfs/extras.d/$extra.post-src"
+    if [ -d "$src" ]; then
+        rm -rf "$ROOTFS/tmp/piano-extra-$extra-src"
+        cp -a "$src" "$ROOTFS/tmp/piano-extra-$extra-src"
+    fi
+    chroot "$ROOTFS" "/tmp/piano-extra-$extra-post.sh"
+    rm -f "$ROOTFS/tmp/piano-extra-$extra-post.sh"
+    rm -rf "$ROOTFS/tmp/piano-extra-$extra-src"
+done
 chroot "$ROOTFS" useradd -m -s /bin/bash -G sudo,audio,video,input,render "$PIANO_USERNAME"
 # A12：密码由用户指定（默认 piano，用户装完自行修改），不再随机生成。
 printf '%s:%s\n' "$PIANO_USERNAME" "$PIANO_PASSWORD" | chroot "$ROOTFS" chpasswd
@@ -261,25 +282,6 @@ rm -f "$ROOTFS/var/lib/dbus/machine-id"
 ln -sf /etc/machine-id "$ROOTFS/var/lib/dbus/machine-id"
 rm -f "$ROOTFS/etc/resolv.conf"
 ln -s /run/NetworkManager/resolv.conf "$ROOTFS/etc/resolv.conf"
-# extras 后置钩子：所有包装机 + overlay + piano-mesa + 用户/系统配置之后运行
-# （补丁已安装应用的 desktop 文件、依赖 vendor Mesa 在位的用户态构建等）。
-# pre 钩子跑在包装机之前，满足不了这两类需求，故有 post 钩子。
-# 数据驱动：extras.d/<name>.post.sh + 可选 extras.d/<name>.post-src/
-# （后者拷入 chroot 的 /tmp/piano-extra-<name>-src/ 供钩子取用）。
-# 注意：post 钩子的 apt 操作发生在 manifest 之前，manifest 反映最终状态。
-for extra in ${PIANO_EXTRAS:-}; do
-    post="$REPO/rootfs/extras.d/$extra.post.sh"
-    [ -f "$post" ] || continue
-    install -m 0755 "$post" "$ROOTFS/tmp/piano-extra-$extra-post.sh"
-    src="$REPO/rootfs/extras.d/$extra.post-src"
-    if [ -d "$src" ]; then
-        rm -rf "$ROOTFS/tmp/piano-extra-$extra-src"
-        cp -a "$src" "$ROOTFS/tmp/piano-extra-$extra-src"
-    fi
-    chroot "$ROOTFS" "/tmp/piano-extra-$extra-post.sh"
-    rm -f "$ROOTFS/tmp/piano-extra-$extra-post.sh"
-    rm -rf "$ROOTFS/tmp/piano-extra-$extra-src"
-done
 {
     echo "suite=$SUITE arch=arm64 desktop=kde firmware=not-included"
     # shellcheck disable=SC2016
