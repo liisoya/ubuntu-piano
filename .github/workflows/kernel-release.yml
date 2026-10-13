@@ -1,0 +1,176 @@
+# ============================================================================
+# 🚀 Publish a prebuilt piano kernel as a GitHub Release
+# ============================================================================
+# 用途（ADR-0006 / spec §10）：把"基线 + 补丁集"的产物固化成可复用的预编译内核，
+# 让 rootfs 迭代不再每次重编内核；想改内核的人走 custom_build（源码构建）。
+#
+# 产物（release asset）：
+#   Image                 内核镜像
+#   modules-<kver>.tar.zst 模块树（含 v4l2loopback updates/）
+#   dtbs.tar.zst          设备树
+#   kernel.config         实际配置
+#   kernel-release.txt    内核版本号（vermagic 依据）
+#   MANIFEST.txt          来源：基线 commit + 每个补丁的 sha256 + cmdline diff
+#
+# ⚠ 当前 rootfs 流水线把 initramfs 内嵌进 Image，直接使用预编译 Image 需要
+#   外部 ramdisk 路径（backlog）；本 workflow 先把可复现发布通道建起来。
+name: Publish Kernel Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: 'blu-sharky/linux-piano 分支或修订'
+        type: string
+        default: 'piano-7.2.6'
+      release_tag:
+        description: 'Release tag（建议 kernel-<kver>-<短 sha>）'
+        type: string
+        default: ''
+      include_v4l2loopback:
+        description: '一并构建 v4l2loopback（相机回环，GPL-2.0）'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  kernel:
+    name: build + publish
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 8G
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: true }
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v5
+        with:
+          repository: blu-sharky/linux-piano
+          ref: ${{ inputs.kernel_ref }}
+          path: workspace/linux-piano
+          persist-credentials: false
+
+      - name: Checkout v4l2loopback
+        if: ${{ inputs.include_v4l2loopback }}
+        uses: actions/checkout@v5
+        with:
+          repository: umlaeute/v4l2loopback
+          ref: 0f9ee86760b7f2bea174b7e3e7a1d38845da0ab4
+          path: workspace/v4l2loopback
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              clang lld llvm ccache make flex bison bc libssl-dev libelf-dev \
+              cpio kmod device-tree-compiler zstd python3
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: piano-kernel-clang-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: piano-kernel-clang-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Inject dual-boot cmdline
+        working-directory: workspace/linux-piano
+        run: |
+          cfg=arch/arm64/configs/piano_rootfs.config
+          sed -i 's/root=PARTLABEL=userdata/root=PARTLABEL=linux-root/; s/CONFIG_LOCALVERSION="-piano-gnome"/CONFIG_LOCALVERSION="-piano-kde"/' "$cfg"
+          grep -q 'root=PARTLABEL=linux-root' "$cfg" || { echo 'cmdline injection failed' >&2; exit 1; }
+          git diff > "$GITHUB_WORKSPACE/piano_rootfs.config.diff"
+
+      - name: Apply kernel patch series
+        working-directory: workspace/linux-piano
+        run: |
+          patchdir="$GITHUB_WORKSPACE/kernel/patches"
+          if compgen -G "$patchdir/*.patch" >/dev/null; then
+            for p in $(ls "$patchdir"/*.patch | LC_ALL=C sort); do
+              git apply --check "$p" || { echo "PATCH NOT CLEAN: $p" >&2; exit 1; }
+              git apply "$p"
+            done
+            git diff > "$GITHUB_WORKSPACE/kernel-patches.diff"
+          else
+            : > "$GITHUB_WORKSPACE/kernel-patches.diff"
+          fi
+
+      - name: Build Image + modules
+        working-directory: workspace/linux-piano
+        run: |
+          set -eu
+          O=$PWD/out/rootfs-image
+          mkdir -p "$O" stage
+          MAKE=(make ARCH=arm64 LLVM=1 O="$O")
+          command -v ccache >/dev/null && MAKE+=(CC="ccache clang")
+          "${MAKE[@]}" piano_defconfig
+          ./scripts/kconfig/merge_config.sh -m -O "$O" "$O/.config" arch/arm64/configs/piano_rootfs.config
+          "${MAKE[@]}" olddefconfig
+          "${MAKE[@]}" -j"$(nproc)" Image modules dtbs
+          KVER=$(cat "$O/include/config/kernel.release")
+          "${MAKE[@]}" modules_install INSTALL_MOD_PATH="$PWD/stage/modules" INSTALL_MOD_STRIP=1
+          if [ "${{ inputs.include_v4l2loopback }}" = true ]; then
+            cp -a "$GITHUB_WORKSPACE/workspace/v4l2loopback" "$PWD/stage/v4l2loopback"
+            rm -rf "$PWD/stage/v4l2loopback/.git"
+            "${MAKE[@]}" -j"$(nproc)" M="$PWD/stage/v4l2loopback" modules
+            "${MAKE[@]}" M="$PWD/stage/v4l2loopback" modules_install \
+                INSTALL_MOD_PATH="$PWD/stage/modules" INSTALL_MOD_DIR=updates INSTALL_MOD_STRIP=1
+          fi
+          # vermagic gate：每个模块必须带本次构建的 release（照抄上游纪律）
+          while IFS= read -r -d '' ko; do
+            [ "$(modinfo -F vermagic "$ko")" = "$KVER "* ] || { echo "Stale module: $ko" >&2; exit 1; }
+          done < <(find "$PWD/stage/modules" -name '*.ko*' -print0)
+          echo "$KVER" > "$GITHUB_WORKSPACE/kernel-release.txt"
+
+      - name: Package release assets
+        run: |
+          set -eu
+          cd workspace/linux-piano
+          KVER=$(cat "$GITHUB_WORKSPACE/kernel-release.txt")
+          mkdir -p "$GITHUB_WORKSPACE/rel"
+          cp out/rootfs-image/arch/arm64/boot/Image "$GITHUB_WORKSPACE/rel/Image"
+          cp out/rootfs-image/.config "$GITHUB_WORKSPACE/rel/kernel.config"
+          tar --numeric-owner -I 'zstd -T0 -12' -cf "$GITHUB_WORKSPACE/rel/modules-$KVER.tar.zst" -C stage/modules .
+          (cd out/rootfs-image/arch/arm64/boot/dts/qcom && tar --numeric-owner -I 'zstd -T0 -12' -cf "$GITHUB_WORKSPACE/rel/dtbs.tar.zst" .)
+          {
+            echo "piano prebuilt kernel"
+            echo "baseline=$(git rev-parse HEAD)"
+            echo "kernel=$KVER"
+            sha256sum "$GITHUB_WORKSPACE/rel/Image"
+            echo '--- patches ---'
+            patchdir="$GITHUB_WORKSPACE/kernel/patches"
+            if compgen -G "$patchdir/*.patch" >/dev/null; then
+              (cd "$patchdir" && sha256sum *.patch)
+            else
+              echo '(none)'
+            fi
+            echo '--- cmdline diff ---'
+            cat "$GITHUB_WORKSPACE/piano_rootfs.config.diff"
+            echo '--- patch series diff ---'
+            cat "$GITHUB_WORKSPACE/kernel-patches.diff"
+          } > "$GITHUB_WORKSPACE/rel/MANIFEST.txt"
+          (cd "$GITHUB_WORKSPACE/rel" && sha256sum ./* > SHA256SUMS)
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          KVER=$(cat kernel-release.txt)
+          TAG="${{ inputs.release_tag }}"
+          [ -n "$TAG" ] || TAG="kernel-$KVER-$(git -C workspace/linux-piano rev-parse --short=12 HEAD)"
+          gh release create "$TAG" rel/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --notes "Prebuilt piano kernel ($KVER). 来源与补丁见 MANIFEST.txt。device-tested: no"
+
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: piano-kernel-clang-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
