@@ -1,0 +1,462 @@
+# ============================================================================
+# 🐧 Build RootFS for Xiaomi Pad 8 Pro (piano) — Ubuntu 26.04 (resolute) + KDE
+# ============================================================================
+# 外壳（GitHub Actions + Advanced Configuration 参数面）参照 ianchb/debian-sheng；
+# 构建逻辑全部在 ci/build.sh 里（piano-kubuntu 绿灯版本移植），workflow 只做
+# "收集输入 → 导出 env → 调脚本"，本地可复现、可单测（ADR-0005 / spec §3）。
+#
+# 多 job 拆分原则（稳定优先，耦合最小）：
+#   components  → rootfs → kernel-images
+#   - components：mesa / sensors / mipps 各自构建，改一次只重编它自己
+#   - rootfs：debootstrap + 包 + deb + overlay/extras，产 rootfs 树
+#   - kernel-images：内核树 + modules + rootfs 树在同一 job 内完成
+#     （Image 需嵌入 initramfs 重编，跨 job 传构建树风险高，故不拆）
+#     内核 job 内部保持 Image+modules 同批重编 + vermagic gate（liuqin 纪律：
+#     config 变更必须与模块同批，否则旧模块用过期的结构偏移量）
+#
+# 当前状态：kernel_source 仅支持 custom_build（源码构建）。prebuilt 模式需要
+# 把 initramfs 作为外部 ramdisk 打进 boot.img（本流水线用的是内核内嵌方式），
+# 待 kernel-release 通道就绪后实现——先 fail-closed，不做半套。
+name: Build RootFS (piano)
+
+on:
+  workflow_dispatch:
+    inputs:
+      # --- 系统形态 ---
+      distro_suite:
+        description: 'Ubuntu 版本（26.04 = resolute LTS）'
+        type: choice
+        options: ['26.04', '25.10']
+        default: '26.04'
+      desktop:
+        description: '桌面环境（server = 无 DE）'
+        type: choice
+        options: ['KDE Plasma', 'GNOME', 'server']
+        default: 'KDE Plasma'
+      plasma_mobile:
+        description: '以 plasma-mobile 替代 plasma-desktop（仅 KDE；本期未接线）'
+        type: boolean
+        default: false
+      autologin:
+        description: '自动登录'
+        type: boolean
+        default: true
+      boot_mode:
+        description: '启动分区模式：dual=linux-root（双系统）/ single=userdata（独占，毁 Android 数据）/ custom'
+        type: choice
+        options: ['dual', 'single', 'custom']
+        default: 'dual'
+      custom_partition:
+        description: 'custom 模式下的分区名'
+        type: string
+        default: ''
+      quiet_boot:
+        description: 'Plymouth 安静启动'
+        type: boolean
+        default: true
+      # --- 身份与本地化 ---
+      username:
+        description: '普通用户名'
+        type: string
+        default: 'piano'
+      hostname:
+        description: '主机名'
+        type: string
+        default: 'piano'
+      password:
+        description: '用户密码（用户可自行修改；SSH 默认同此密码）'
+        type: string
+        default: 'piano'
+      ssh_auth:
+        description: 'SSH 认证方式'
+        type: choice
+        options: ['password', 'keys-only']
+        default: 'password'
+      language:
+        description: '系统语言'
+        type: choice
+        options: ['zh_CN.UTF-8', 'en_US.UTF-8', 'None (C.UTF-8)']
+        default: 'zh_CN.UTF-8'
+      timezone:
+        description: '时区'
+        type: string
+        default: 'Asia/Shanghai'
+      # --- 个性化 extras（数据驱动：extras.d/ 片段）---
+      extra_fcitx5:
+        description: 'extras: Fcitx 5 中文输入法'
+        type: boolean
+        default: true
+      extra_compression:
+        description: 'extras: 常用压缩工具'
+        type: boolean
+        default: true
+      browser:
+        description: 'extras: 浏览器'
+        type: choice
+        options: ['none', 'firefox', 'chrome']
+        default: 'none'
+      extra_dev_tools:
+        description: 'extras: 开发工具（编译器/CMake/Python）'
+        type: boolean
+        default: false
+      extra_docker:
+        description: 'extras: Docker'
+        type: boolean
+        default: false
+      # --- 来源 pin ---
+      kernel_source:
+        description: '内核来源（当前仅 custom_build 可用）'
+        type: choice
+        options: ['custom_build', 'prebuilt']
+        default: 'custom_build'
+      kernel_repo:
+        description: '内核仓库'
+        type: string
+        default: 'https://github.com/blu-sharky/linux-piano'
+      kernel_branch:
+        description: '内核分支'
+        type: string
+        default: 'piano-7.2.6'
+      firmware_ref:
+        description: 'piano-firmware 修订'
+        type: string
+        default: main
+      mesa_ref:
+        description: 'piano-mesa 修订'
+        type: string
+        default: main
+      sensors_ref:
+        description: 'piano-sensors 修订'
+        type: string
+        default: main
+      mipps_ref:
+        description: 'piano-mipps-auth 修订'
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+env:
+  PIANO_ROOTFS_SUITE: ${{ inputs.distro_suite == '26.04' && 'resolute' || 'questing' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) 组件：mesa（Adreno 830 chip-id 补丁）/ sensors（SSC+iio-sensor-proxy）/ mipps
+  # ---------------------------------------------------------------------------
+  components:
+    name: components (mesa/sensors/mipps)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+
+      - name: Checkout piano Mesa
+        uses: actions/checkout@v5
+        with:
+          repository: blu-sharky/piano-mesa
+          ref: ${{ inputs.mesa_ref }}
+          path: workspace/piano-mesa
+          persist-credentials: false
+
+      - name: Checkout piano sensors
+        uses: actions/checkout@v5
+        with:
+          repository: blu-sharky/piano-sensors
+          ref: ${{ inputs.sensors_ref }}
+          path: workspace/piano-sensors
+          persist-credentials: false
+
+      - name: Checkout piano MiPPS authentication
+        uses: actions/checkout@v5
+        with:
+          repository: blu-sharky/piano-mipps-auth
+          ref: ${{ inputs.mipps_ref }}
+          path: workspace/piano-mipps-auth
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends docker.io python3 udev
+
+      - name: Build Mesa (resolute variant, vendored piano-mesa)
+        run: |
+          # 本仓 vendored 的 piano-mesa 是 resolute 变体（kisak 源 + A830v1 chip-id）；
+          # blu-sharky 原版是 Debian trixie 构建，其 deb 在 resolute 装不上（实证）。
+          piano-mesa/scripts/build-in-container.sh out/mesa "$PWD/.ccache-mesa"
+          echo "piano-mesa resolute-variant (vendored)" > out/mesa/SOURCE
+
+      - name: Build sensors packages
+        working-directory: workspace
+        run: |
+          piano-sensors/scripts/build-in-container.sh ../out/sensors
+          echo "piano-sensors $(git -C piano-sensors rev-parse HEAD)" > ../out/sensors/SOURCE
+
+      - name: Build MiPPS package
+        working-directory: workspace
+        run: |
+          mkdir -p ../out/userspace
+          cp ../out/sensors/runtime/*.deb ../out/userspace/
+          piano-mipps-auth/build-deb.sh "$GITHUB_WORKSPACE/out/userspace/xiaomi-mipps-auth.deb"
+          echo "piano-mipps-auth $(git -C piano-mipps-auth rev-parse HEAD)" > ../out/userspace/SOURCE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piano-components-${{ github.sha }}
+          path: out/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # 2) rootfs 树：debootstrap + 包 + 组件 deb + overlay/extras
+  # ---------------------------------------------------------------------------
+  rootfs:
+    name: rootfs tree
+    needs: components
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: piano-components-${{ github.sha }}
+          path: out/components
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              debootstrap qemu-user-static binfmt-support curl openssh-client \
+              openssl zstd xz-utils e2fsprogs python3
+          test -s /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          # noble runner 的 debootstrap 可能早于 26.04：从 resolute 自带源取一份
+          if [ ! -e /usr/share/debootstrap/scripts/${PIANO_ROOTFS_SUITE} ]; then
+            echo "deb http://archive.ubuntu.com/ubuntu ${PIANO_ROOTFS_SUITE} main" | sudo tee /etc/apt/sources.list.d/tmp-suite.list
+            sudo apt-get update
+            sudo apt-get install -y debootstrap
+            sudo rm /etc/apt/sources.list.d/tmp-suite.list
+            test -e /usr/share/debootstrap/scripts/${PIANO_ROOTFS_SUITE}
+          fi
+
+      - name: Verify arguments (fail-closed)
+        env:
+          BOOT_MODE: ${{ inputs.boot_mode }}
+          CUSTOM_PARTITION: ${{ inputs.custom_partition }}
+          KERNEL_SOURCE: ${{ inputs.kernel_source }}
+        run: |
+          case "$BOOT_MODE" in dual|single) ;; custom)
+            [ -n "$CUSTOM_PARTITION" ] || { echo 'boot_mode=custom 需要 custom_partition' >&2; exit 1; } ;;
+          *) echo "boot_mode 非法: $BOOT_MODE" >&2; exit 1 ;; esac
+          [ "$KERNEL_SOURCE" = custom_build ] || {
+            echo 'kernel_source=prebuilt 尚未支持：本流水线的 boot.img 把 initramfs 内嵌进内核，' >&2
+            echo '预编译 Image 无法承载我们的 initramfs；需先实现外部 ramdisk 路径（backlog）。' >&2
+            exit 1; }
+          echo "suite=$PIANO_ROOTFS_SUITE boot_mode=$BOOT_MODE ✓"
+
+      - name: Build rootfs tree (ci/build.sh --stage rootfs)
+        env:
+          SSH_PUBLIC_KEY: ${{ vars.PIANO_SSH_PUBLIC_KEY }}
+          PIANO_USERNAME: ${{ inputs.username }}
+          PIANO_PASSWORD: ${{ inputs.password }}
+        run: |
+          mkdir -p out/image
+          # 约定：本 job 只产 rootfs 树（含 COMPLETE 与 build-manifest），
+          # kernel-images job 下载后原样恢复，脚本契约不变。
+          bash -x ci/build.sh --stage rootfs \
+              --kernel-tree . \
+              --mesa-dir out/components/mesa/runtime \
+              --sensors-dir out/components/userspace \
+              --output out/image
+
+      - name: Package rootfs tree
+        run: |
+          test -f out/image/rootfs-build/COMPLETE
+          sudo tar --numeric-owner --xattrs --acls -C out/image/rootfs-build \
+              -I 'zstd -T0 -3' -cf out/rootfs-tree.tar.zst .
+          sha256sum out/rootfs-tree.tar.zst
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piano-rootfs-tree-${{ github.sha }}
+          path: out/rootfs-tree.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # 3) 内核 + 镜像：内核树内应用补丁序列 → Image+modules → initramfs → boot.img
+  #    → rootfs 镜像 → gate → 产物
+  # ---------------------------------------------------------------------------
+  kernel-images:
+    name: kernel + images
+    needs: rootfs
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 8G
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.kernel_repo }}
+          ref: ${{ inputs.kernel_branch }}
+          path: workspace/linux-piano
+          persist-credentials: false
+
+      - name: Checkout piano firmware
+        uses: actions/checkout@v5
+        with:
+          repository: blu-sharky/piano-firmware
+          ref: ${{ inputs.firmware_ref }}
+          path: workspace/piano-firmware
+          persist-credentials: false
+
+      - name: Checkout v4l2loopback (camera loopback, GPL-2.0)
+        uses: actions/checkout@v5
+        with:
+          repository: umlaeute/v4l2loopback
+          ref: 0f9ee86760b7f2bea174b7e3e7a1d38845da0ab4
+          path: workspace/v4l2loopback
+          persist-credentials: false
+
+      - name: Checkout AudioReach topology macros (BSD-3)
+        uses: actions/checkout@v5
+        with:
+          repository: linux-msm/audioreach-topology
+          ref: 993a17dcb672357998a463a73f120064d6c74f4f
+          path: workspace/audioreach-topology
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: piano-rootfs-tree-${{ github.sha }}
+          path: out/tree
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              clang lld llvm ccache make flex bison bc libssl-dev libelf-dev \
+              rsync cpio kmod device-tree-compiler debootstrap curl openssh-client \
+              openssl e2fsprogs python3 zstd xz-utils lz4 m4 alsa-utils
+          test -s /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: piano-kde-clang-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: piano-kde-clang-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Inject dual-boot cmdline into piano_rootfs.config
+        working-directory: workspace/linux-piano
+        run: |
+          cfg=arch/arm64/configs/piano_rootfs.config
+          test -f "$cfg"
+          sed -i 's/root=PARTLABEL=userdata/root=PARTLABEL=linux-root/; s/CONFIG_LOCALVERSION="-piano-gnome"/CONFIG_LOCALVERSION="-piano-kde"/' "$cfg"
+          grep -q 'root=PARTLABEL=linux-root' "$cfg" || { echo 'cmdline injection failed' >&2; exit 1; }
+          git diff > "$GITHUB_WORKSPACE/piano_rootfs.config.diff"
+
+      - name: Apply kernel patch series (ADR-0006)
+        working-directory: workspace/linux-piano
+        run: |
+          patchdir="$GITHUB_WORKSPACE/kernel/patches"
+          if ! compgen -G "$patchdir/*.patch" >/dev/null; then
+            echo "no kernel patches; baseline as-is"; exit 0
+          fi
+          for p in $(ls "$patchdir"/*.patch | LC_ALL=C sort); do
+            echo "applying $(basename "$p")"
+            git apply --check "$p" || { echo "PATCH NOT CLEAN: $p" >&2; exit 1; }
+            git apply "$p"
+            sha256sum "$p"
+          done
+          git diff > "$GITHUB_WORKSPACE/kernel-patches.diff"
+          echo "kernel-patches-diff-sha256 $(sha256sum "$GITHUB_WORKSPACE/kernel-patches.diff" | cut -d' ' -f1)"
+
+      - name: Build kernel + assemble images (ci/build.sh)
+        env:
+          SSH_PUBLIC_KEY: ${{ vars.PIANO_SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p out/image/rootfs-build
+          sudo tar --numeric-owner --xattrs --acls -I 'zstd -d' -xf out/tree/rootfs-tree.tar.zst -C out/image/rootfs-build
+          test -f out/image/rootfs-build/COMPLETE
+          ccache --zero-stats
+          bash -x ci/build.sh --stage kernel \
+              --kernel-tree workspace/linux-piano \
+              --firmware-tree workspace/piano-firmware/firmware \
+              --v4l2loopback workspace/v4l2loopback \
+              --audioreach-topology workspace/audioreach-topology \
+              --jobs "$(nproc)" --output out/image
+          bash -x ci/build.sh --stage images \
+              --kernel-tree workspace/linux-piano \
+              --firmware-tree workspace/piano-firmware/firmware \
+              --v4l2loopback workspace/v4l2loopback \
+              --audioreach-topology workspace/audioreach-topology \
+              --rootfs-build out/image/rootfs-build \
+              --jobs "$(nproc)" --output out/image
+
+      - name: Package flashable bundle + rootfs tarball + gates
+        run: |
+          rm -f out/image/userdata.raw.img out/image/userdata.img
+          debian-piano/scripts/sign-boot-avb.sh out/image/boot.img
+          echo "boot.img: AVB-signed after build; sha256 $(sha256sum out/image/boot.img | cut -d' ' -f1)" >> out/image/MANIFEST.txt
+          cat piano_rootfs.config.diff >> out/image/MANIFEST.txt
+          [ ! -f kernel-patches.diff ] || { echo '--- kernel patch series ---' >> out/image/MANIFEST.txt; cat kernel-patches.diff >> out/image/MANIFEST.txt; }
+          # 闸门（不过不出包）
+          test -s out/image/boot.img
+          test -s out/image/dtbo.img
+          grep -q 'device-tested: no' out/image/MANIFEST.txt
+          mkdir -p out/bundle out/rootfs-tar
+          cp out/image/boot.img out/image/dtbo.img out/image/kernel.config \
+             out/image/packages.txt out/image/MANIFEST.txt out/image/SOURCE-SHA256SUMS out/bundle/
+          (cd out/bundle && sha256sum ./* > SHA256SUMS)
+          sudo tar --numeric-owner --xattrs --acls -C out/image/rootfs-build/rootfs \
+              -I 'zstd -T0 -3' -cf out/rootfs-tar/rootfs-kubuntu-26.04-arm64.tar.zst .
+          (cd out/rootfs-tar && sha256sum ./* > SHA256SUMS)
+
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Prune this ref's older compiler caches
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" \
+            --key piano-kde-clang- --limit 100 --json id --jq '.[].id' |
+            xargs -r -n1 gh cache delete --repo "$GITHUB_REPOSITORY"
+
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: piano-kde-clang-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piano-kde-flash-${{ github.sha }}
+          path: out/bundle/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piano-kde-rootfs-${{ github.sha }}
+          path: out/rootfs-tar/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

@@ -47,17 +47,23 @@ done
 case "$STAGE" in kernel|rootfs|images|all) ;; *) die '--stage must be kernel|rootfs|images|all' ;;
 esac
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "--jobs must be positive (got '$JOBS')"
-[ -n "$KERNEL_TREE" ] || die '--kernel-tree is required'
 [ -n "$OUTPUT" ] || die '--output is required'
 [ ! -e "$OUTPUT" ] || die 'output exists; choose a fresh directory'
-[ -f "$KERNEL_TREE/Makefile" ] || die "$KERNEL_TREE does not look like a kernel tree"
-[ -f "$KERNEL_TREE/arch/arm64/configs/piano_defconfig" ] || die 'piano_defconfig missing'
-# KUBUNTU-DIFF: the workflow must have injected the dual-boot cmdline and
-# release suffix before calling us; assert instead of trusting.
-ROOTCFG="$KERNEL_TREE/arch/arm64/configs/piano_rootfs.config"
-grep -q 'root=PARTLABEL=linux-root' "$ROOTCFG" || die 'piano_rootfs.config lacks root=PARTLABEL=linux-root (workflow injection missing)'
-grep -q 'root=PARTLABEL=userdata' "$ROOTCFG" && die 'piano_rootfs.config still contains root=PARTLABEL=userdata'
-grep -q 'CONFIG_LOCALVERSION="-piano-kde"' "$ROOTCFG" || die 'piano_rootfs.config lacks the -piano-kde release suffix'
+# 多 job 拆分后，rootfs 阶段不需要内核树；内核相关断言只在内核/镜像阶段生效
+# （多 job 工作流：components → rootfs → kernel-images）。
+if [ "$STAGE" != rootfs ]; then
+    [ -n "$KERNEL_TREE" ] || die '--kernel-tree is required'
+    [ -f "$KERNEL_TREE/Makefile" ] || die "$KERNEL_TREE does not look like a kernel tree"
+    [ -f "$KERNEL_TREE/arch/arm64/configs/piano_defconfig" ] || die 'piano_defconfig missing'
+    # KUBUNTU-DIFF: the workflow must have injected the dual-boot cmdline and
+    # release suffix before calling us; assert instead of trusting.
+    ROOTCFG="$KERNEL_TREE/arch/arm64/configs/piano_rootfs.config"
+    grep -q 'root=PARTLABEL=linux-root' "$ROOTCFG" || die 'piano_rootfs.config lacks root=PARTLABEL=linux-root (workflow injection missing)'
+    grep -q 'root=PARTLABEL=userdata' "$ROOTCFG" && die 'piano_rootfs.config still contains root=PARTLABEL=userdata'
+    grep -q 'CONFIG_LOCALVERSION="-piano-kde"' "$ROOTCFG" || die 'piano_rootfs.config lacks the -piano-kde release suffix'
+else
+    KERNEL_TREE=${KERNEL_TREE:-.}
+fi
 
 for cmd in clang ld.lld cpio depmod modinfo dtc python3 mkfs.ext4 dumpe2fs; do
     command -v "$cmd" >/dev/null || die "missing $cmd"
