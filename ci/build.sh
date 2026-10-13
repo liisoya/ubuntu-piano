@@ -48,7 +48,11 @@ case "$STAGE" in kernel|rootfs|images|all) ;; *) die '--stage must be kernel|roo
 esac
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "--jobs must be positive (got '$JOBS')"
 [ -n "$OUTPUT" ] || die '--output is required'
-[ ! -e "$OUTPUT" ] || die 'output exists; choose a fresh directory'
+# 多 job 流水线会分次调用本脚本（--stage kernel 后再 --stage images），
+# 因此只有 --stage all 要求输出目录全新；单阶段允许复用同一输出目录。
+if [ "$STAGE" = all ] && [ -e "$OUTPUT" ]; then
+    die 'output exists; choose a fresh directory'
+fi
 # 多 job 拆分后，rootfs 阶段不需要内核树；内核相关断言只在内核/镜像阶段生效
 # （多 job 工作流：components → rootfs → kernel-images）。
 if [ "$STAGE" != rootfs ]; then

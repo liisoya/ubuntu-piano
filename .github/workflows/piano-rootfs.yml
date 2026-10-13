@@ -388,23 +388,33 @@ jobs:
         env:
           SSH_PUBLIC_KEY: ${{ vars.PIANO_SSH_PUBLIC_KEY }}
         run: |
-          mkdir -p out/image/rootfs-build
-          sudo tar --numeric-owner --xattrs --acls -I 'zstd -d' -xf out/tree/rootfs-tree.tar.zst -C out/image/rootfs-build
-          test -f out/image/rootfs-build/COMPLETE
+          # 密钥只生成一次，两次调用共用（否则 initramfs 与 rootfs 的 key 不一致）
+          key_args=()
+          if [ -n "$SSH_PUBLIC_KEY" ]; then
+            printf '%s\n' "$SSH_PUBLIC_KEY" > out/authorized_keys
+          else
+            ssh-keygen -q -t ed25519 -N '' -C piano -f out/access-key
+            cp out/access-key.pub out/authorized_keys
+          fi
+          key_args=(--authorized-keys "$PWD/out/authorized_keys")
           ccache --zero-stats
           bash -x ci/build.sh --stage kernel \
               --kernel-tree workspace/linux-piano \
               --firmware-tree workspace/piano-firmware/firmware \
               --v4l2loopback workspace/v4l2loopback \
               --audioreach-topology workspace/audioreach-topology \
-              --jobs "$(nproc)" --output out/image
+              --jobs "$(nproc)" --output out/image "${key_args[@]}"
+          # kernel 阶段建好 out/image 后，把 rootfs 树解到脚本契约位置
+          mkdir -p out/image/rootfs-build
+          sudo tar --numeric-owner --xattrs --acls -I 'zstd -d' -xf out/tree/rootfs-tree.tar.zst -C out/image/rootfs-build
+          test -f out/image/rootfs-build/COMPLETE
           bash -x ci/build.sh --stage images \
               --kernel-tree workspace/linux-piano \
               --firmware-tree workspace/piano-firmware/firmware \
               --v4l2loopback workspace/v4l2loopback \
               --audioreach-topology workspace/audioreach-topology \
               --rootfs-build out/image/rootfs-build \
-              --jobs "$(nproc)" --output out/image
+              --jobs "$(nproc)" --output out/image "${key_args[@]}"
 
       - name: Package flashable bundle + rootfs tarball + gates
         run: |
