@@ -148,6 +148,11 @@ jobs:
     name: components (mesa/sensors/mipps)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
+    env:
+      # 与内核 job 共享同一 ccache 目录并做缓存恢复：mesa 冷编译要 ~45 min
+      # （6575 个编译目标），热缓存可大幅缩短（冒烟 run 38452973865 实测教训）
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 8G
     steps:
       - uses: actions/checkout@v5
         with: { persist-credentials: false }
@@ -187,11 +192,18 @@ jobs:
           docker version
           sudo apt-get install -y --no-install-recommends python3
 
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: piano-components-clang-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: piano-components-clang-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Build Mesa (resolute variant, vendored piano-mesa)
         run: |
           # 本仓 vendored 的 piano-mesa 是 resolute 变体（kisak 源 + A830v1 chip-id）；
           # blu-sharky 原版是 Debian trixie 构建，其 deb 在 resolute 装不上（实证）。
-          piano-mesa/scripts/build-in-container.sh out/mesa "$PWD/.ccache-mesa"
+          piano-mesa/scripts/build-in-container.sh out/mesa "$CCACHE_DIR"
           echo "piano-mesa resolute-variant (vendored)" > out/mesa/SOURCE
 
       - name: Build sensors packages
@@ -207,6 +219,13 @@ jobs:
           cp ../out/sensors/runtime/*.deb ../out/userspace/
           piano-mipps-auth/build-deb.sh "$GITHUB_WORKSPACE/out/userspace/xiaomi-mipps-auth.deb"
           echo "piano-mipps-auth $(git -C piano-mipps-auth rev-parse HEAD)" > ../out/userspace/SOURCE
+
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: piano-components-clang-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - uses: actions/upload-artifact@v4
         with:
