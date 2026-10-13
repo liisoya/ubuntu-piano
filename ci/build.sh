@@ -69,9 +69,19 @@ else
     KERNEL_TREE=${KERNEL_TREE:-.}
 fi
 
-for cmd in clang ld.lld cpio depmod modinfo dtc python3 mkfs.ext4 dumpe2fs; do
-    command -v "$cmd" >/dev/null || die "missing $cmd"
-done
+# 工具检查同样按阶段区分：rootfs 阶段不需要内核编译工具链
+# （多 job 下每个 job 只装自己需要的依赖；冒烟 run 38425831233 实证：
+#   rootfs job 未装 clang/lld，统一检查会以 missing ld.lld 失败）。
+if [ "$STAGE" != rootfs ]; then
+    for cmd in clang ld.lld cpio depmod modinfo dtc python3 mkfs.ext4 dumpe2fs; do
+        command -v "$cmd" >/dev/null || die "missing $cmd"
+    done
+else
+    for cmd in debootstrap chroot; do
+        command -v "$cmd" >/dev/null || die "missing $cmd"
+    done
+    [ "$(id -u)" = 0 ] || command -v sudo >/dev/null || die 'sudo or root is required for the rootfs stage'
+fi
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 D=$REPO/debian-piano
