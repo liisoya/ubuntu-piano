@@ -1,0 +1,5 @@
+[KDE]
+AnimationDurationFactor=0
+# VERIFY-ON-DEVICE: Plasma 6 Wayland scale key; confirm 2x UI on piano panel.
+[KScreen]
+ScaleFactor=2

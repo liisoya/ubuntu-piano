@@ -1,0 +1,1 @@
+PARTLABEL=linux-root / ext4 defaults,noatime,x-systemd.growfs 0 1

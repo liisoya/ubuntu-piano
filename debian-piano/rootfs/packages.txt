@@ -1,0 +1,142 @@
+# Bring-up and everyday tools.
+# Ubuntu resolute (26.04 LTS) arm64; one package per line.
+# KDE Plasma 6 (Wayland) on simpledrm; piano-mesa debs provide the Adreno 830
+# userspace. Package set adapted from blu-sharky debian-piano (GNOME baseline)
+# with the KDE profile taken verbatim from the Droidspaces Ubuntu 26.04
+# profile (proven on resolute arm64) plus piano's dual-boot additions.
+alsa-ucm-conf
+alsa-utils
+ark
+at-spi2-core
+bash
+bc
+bind9-dnsutils
+bluez
+bzip2
+ca-certificates
+clinfo
+console-setup
+coreutils
+curl
+dbus-user-session
+dbus-x11
+debconf
+dmidecode
+dolphin
+dolphin-plugins
+dosfstools
+e2fsprogs
+evtest
+fdisk
+ffmpegthumbs
+file
+filelight
+fonts-dejavu
+fonts-noto-cjk
+fonts-noto-color-emoji
+fcitx5
+fcitx5-chinese-addons
+# Google Chrome official arm64 build; repo added in build-rootfs.sh
+# (deb [arch=arm64] https://dl.google.com/linux/chrome/deb/ stable main).
+google-chrome-stable
+gwenview
+git
+gstreamer1.0-libav
+# GStreamer players decode on the Iris codec through the V4L2 stateful
+# decoders (plugins-good) and need the stream parsers from plugins-bad.
+gstreamer1.0-plugins-bad
+gstreamer1.0-plugins-good
+gstreamer1.0-tools
+htop
+iproute2
+iputils-ping
+iw
+kate
+kde-config-screenlocker
+kde-plasma-desktop
+kdegraphics-thumbnailers
+kfind
+kimageformat6-plugins
+kinfocenter
+kio-extras
+kmod
+konsole
+kscreen
+kubuntu-settings-desktop
+kubuntu-wallpapers
+language-pack-kde-zh-hans
+language-pack-zh-hans
+less
+libcanberra-pulse
+libdisplay-info-bin
+libdrm-tests
+libgl1-mesa-dri
+libinput-tools
+libpam-kwallet5
+libpam-modules
+libpam-systemd
+libxcb-keysyms1
+locales
+mesa-utils
+mesa-utils-bin
+nano
+network-manager
+okular
+openssh-server
+parted
+pciutils
+pipewire
+pipewire-alsa
+pipewire-audio
+pipewire-pulse
+plasma-browser-integration
+plasma-pa
+plasma-session-x11
+plasma-systemmonitor
+polkit-kde-agent-1
+powerdevil
+procps
+psmisc
+python3
+# Marks the booted A/B slot successful so ABL keeps slot b bootable.
+qbootctl
+qt6-translations-l10n
+rsync
+# display-manager link target; kde-plasma-desktop references it but we pin it
+# explicitly (build dies if the sddm.service link dangles).
+sddm
+sound-theme-freedesktop
+# resolute ships this as kde-spectacle (Debian name "spectacle" is gone;
+# Launchpad-verified 2026-10-09). Same for p7zip-full -> 7zip, glmark2 dropped.
+kde-spectacle
+strace
+sudo
+systemd-sysv
+# zram swap, configured in /etc/systemd/zram-generator.conf.
+systemd-zram-generator
+systemd-timesyncd
+tzdata
+udev
+# unrar needs multiverse (enabled in sources.list); p7zip covers the rest.
+unrar
+upower
+usbutils
+util-linux
+v4l-utils
+vim-tiny
+vlc
+vulkan-tools
+wayland-utils
+wget
+wireless-regdb
+wireplumber
+wpasupplicant
+x11-xserver-utils
+xdg-user-dirs
+xserver-xorg
+xwayland
+xz-utils
+zip
+unzip
+7zip
+zstd

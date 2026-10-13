@@ -1,0 +1,21 @@
+# UNVERIFIED KEY FORMAT: powerdevil button handling must be confirmed at
+# first boot. The power key belongs to the piano-power-button user service;
+# logind already sets HandlePowerKey=ignore (overlay logind.conf.d/piano.conf).
+# If powerdevil still intercepts, fix the profile here on device evidence.
+[AC][Buttons][PowerButton]
+buttonAction=Nothing
+
+[Battery][Buttons][PowerButton]
+buttonAction=Nothing
+
+[AC][DPMSControl]
+idleTime=0
+
+[Battery][DPMSControl]
+idleTime=0
+
+[AC][SuspendSession]
+idleTime=0
+
+[Battery][SuspendSession]
+idleTime=0

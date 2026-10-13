@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Fcitx5
+GenericName=Input Method
+Comment=Start Input Method
+Exec=fcitx5 -d
+Icon=fcitx
+Terminal=false
+Type=Application
+Categories=System;Utility;
+StartupNotify=false
+NoDisplay=true

@@ -1,0 +1,27 @@
+From: liisoya <liisoya@users.noreply.github.com>
+Subject: [PATCH 2/2] media: iris: declare iris_set_deblock_gen2 in iris_ctrls.h
+
+0001-media-iris-enable-decode-order-output-and-deblocking (from
+code002-2/sm8750-video-accel, patches/clean) defines iris_set_deblock_gen2
+in iris_ctrls.c and calls it from iris_hfi_gen2.c (4 sites) but misses the
+header prototype: clang builds fail with
+  iris_hfi_gen2.c: error: use of undeclared identifier 'iris_set_deblock_gen2'
+  iris_ctrls.c: warning: no previous prototype for 'iris_set_deblock_gen2'
+Add the declaration next to its sibling iris_set_bitrate_gen2
+(iris_ctrls.h:26). Reported upstream as a follow-up.
+
+Verified: full series applies on blu-sharky/linux-piano @ piano-7.2.6
+(352508459) and drivers/media/platform/qcom/iris compiles clean
+(LLVM=1, arm64).
+diff --git a/drivers/media/platform/qcom/iris/iris_ctrls.h b/drivers/media/platform/qcom/iris/iris_ctrls.h
+index 3c462ec91..86f2e4205 100644
+--- a/drivers/media/platform/qcom/iris/iris_ctrls.h
++++ b/drivers/media/platform/qcom/iris/iris_ctrls.h
+@@ -24,6 +24,7 @@ int iris_set_header_mode_gen1(struct iris_inst *inst, enum platform_inst_fw_cap_
+ int iris_set_header_mode_gen2(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_bitrate_gen1(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_bitrate_gen2(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
++int iris_set_deblock_gen2(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_peak_bitrate(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_bitrate_mode_gen1(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_bitrate_mode_gen2(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);

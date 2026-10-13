@@ -1,0 +1,3 @@
+# Droidspaces-proven key: compositing off kills KDE animations wholesale.
+[Compositing]
+Enabled=false
