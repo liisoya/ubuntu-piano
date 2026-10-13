@@ -103,6 +103,10 @@ on:
         description: 'extras: Docker'
         type: boolean
         default: false
+      extra_video_accel:
+        description: 'extras: 视频硬件加速（VA-API + Iris，真机已验证 2026-10-14）'
+        type: boolean
+        default: true
       # --- 来源 pin ---
       kernel_source:
         description: '内核来源（当前仅 custom_build 可用）'
@@ -296,6 +300,7 @@ jobs:
           [ "${{ inputs.browser }}" = firefox ] && extras="$extras browser-firefox"
           [ "${{ inputs.extra_dev_tools }}" = true ] && extras="$extras dev-tools"
           [ "${{ inputs.extra_docker }}" = true ] && extras="$extras docker"
+          [ "${{ inputs.extra_video_accel }}" = true ] && extras="$extras video-accel"
           # 约定：本 job 只产 rootfs 树（含 COMPLETE 与 build-manifest），
           # kernel-images job 下载后原样恢复，脚本契约不变。
           bash -x ci/build.sh --stage rootfs \

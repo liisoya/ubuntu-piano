@@ -1,0 +1,7 @@
+# extras: 视频硬件加速用户态（VA-API + Qualcomm Iris）
+# 本片段无 apt 包：VA-API 后端由 video-accel.post.sh 从内置源码构建
+# （radxa-pkg/libva-v4l2，见 video-accel.post-src/PROVENANCE.md）。
+# 内核侧补丁（iris decode-order + deblocking）在 kernel/patches/，无条件应用。
+# 设备验证：2026-10-14 真机（Ubuntu resolute arm64）——
+#   ffmpeg -hwaccel vaapi 硬解 900 帧（CPU 4.0s→1.7s，-57%）；
+#   Chrome 155 chrome://gpu：Video Decode/Encode = Hardware accelerated。

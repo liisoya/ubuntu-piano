@@ -257,6 +257,25 @@ rm -f "$ROOTFS/var/lib/dbus/machine-id"
 ln -sf /etc/machine-id "$ROOTFS/var/lib/dbus/machine-id"
 rm -f "$ROOTFS/etc/resolv.conf"
 ln -s /run/NetworkManager/resolv.conf "$ROOTFS/etc/resolv.conf"
+# extras 后置钩子：所有包装机 + overlay + piano-mesa + 用户/系统配置之后运行
+# （补丁已安装应用的 desktop 文件、依赖 vendor Mesa 在位的用户态构建等）。
+# pre 钩子跑在包装机之前，满足不了这两类需求，故有 post 钩子。
+# 数据驱动：extras.d/<name>.post.sh + 可选 extras.d/<name>.post-src/
+# （后者拷入 chroot 的 /tmp/piano-extra-<name>-src/ 供钩子取用）。
+# 注意：post 钩子的 apt 操作发生在 manifest 之前，manifest 反映最终状态。
+for extra in ${PIANO_EXTRAS:-}; do
+    post="$REPO/rootfs/extras.d/$extra.post.sh"
+    [ -f "$post" ] || continue
+    install -m 0755 "$post" "$ROOTFS/tmp/piano-extra-$extra-post.sh"
+    src="$REPO/rootfs/extras.d/$extra.post-src"
+    if [ -d "$src" ]; then
+        rm -rf "$ROOTFS/tmp/piano-extra-$extra-src"
+        cp -a "$src" "$ROOTFS/tmp/piano-extra-$extra-src"
+    fi
+    chroot "$ROOTFS" "/tmp/piano-extra-$extra-post.sh"
+    rm -f "$ROOTFS/tmp/piano-extra-$extra-post.sh"
+    rm -rf "$ROOTFS/tmp/piano-extra-$extra-src"
+done
 {
     echo "suite=$SUITE arch=arm64 desktop=kde firmware=not-included"
     # shellcheck disable=SC2016
