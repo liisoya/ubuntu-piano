@@ -132,6 +132,11 @@ PIN
 # 2026-10-09 — the PPA carries the whole libdrm family, uncompressed Packages
 # paths 404, use the index apt resolves itself).
 install -d -m 0755 "$ROOTFS/etc/apt/keyrings" "$ROOTFS/etc/apt/sources.list.d"
+# 断言：钥匙必须存在且是真正的 PGP 公钥块（曾被 404 响应体覆盖过一次，
+# 症状是 apt 报签名无效而不是文件缺失——早失败比晚失败便宜）。
+[ -s "$REPO/apt/kisak-mesa.asc" ] || die "missing $REPO/apt/kisak-mesa.asc (kisak-mesa PPA signing key)"
+grep -q 'BEGIN PGP PUBLIC KEY BLOCK' "$REPO/apt/kisak-mesa.asc" || \
+    die "$REPO/apt/kisak-mesa.asc is not a PGP public key (bad copy?)"
 install -m 0644 "$REPO/apt/kisak-mesa.asc" "$ROOTFS/etc/apt/keyrings/kisak-mesa.asc"
 printf 'deb [signed-by=/etc/apt/keyrings/kisak-mesa.asc] https://ppa.launchpadcontent.net/kisak/kisak-mesa/ubuntu resolute main\n' \
     > "$ROOTFS/etc/apt/sources.list.d/kisak-mesa.list"
