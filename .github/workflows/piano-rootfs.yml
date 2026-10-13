@@ -33,10 +33,6 @@ on:
         type: choice
         options: ['KDE Plasma', 'GNOME', 'server']
         default: 'KDE Plasma'
-      plasma_mobile:
-        description: '以 plasma-mobile 替代 plasma-desktop（仅 KDE；本期未接线）'
-        type: boolean
-        default: false
       autologin:
         description: '自动登录'
         type: boolean
@@ -81,32 +77,15 @@ on:
         description: '时区'
         type: string
         default: 'Asia/Shanghai'
-      # --- 个性化 extras（数据驱动：extras.d/ 片段）---
-      extra_fcitx5:
-        description: 'extras: Fcitx 5 中文输入法'
-        type: boolean
-        default: true
-      extra_compression:
-        description: 'extras: 常用压缩工具'
-        type: boolean
-        default: true
-      browser:
-        description: 'extras: 浏览器'
-        type: choice
-        options: ['none', 'firefox', 'chrome']
-        default: 'none'
-      extra_dev_tools:
-        description: 'extras: 开发工具（编译器/CMake/Python）'
-        type: boolean
-        default: false
-      extra_docker:
-        description: 'extras: Docker'
-        type: boolean
-        default: false
-      extra_video_accel:
-        description: 'extras: 视频硬件加速（VA-API + Iris，真机已验证 2026-10-14）'
-        type: boolean
-        default: true
+      # --- 个性化 extras（数据驱动：debian-piano/rootfs/extras.d/<name>.list/.sh）---
+      # GitHub 限制 workflow_dispatch 最多 25 个 input，故 extras 合并为一个
+      # 字符串（逗号/空格分隔的片段名）。加个性化选项 = 加文件，workflow 不改。
+      extras:
+        description: 'extras 片段名（逗号分隔）。可用：fcitx5 / compression /
+          video-accel（VA-API 硬解，真机已验证）/ browser-chrome /
+          browser-firefox / dev-tools / docker'
+        type: string
+        default: 'fcitx5,compression,video-accel'
       # --- 来源 pin ---
       kernel_source:
         description: '内核来源（当前仅 custom_build 可用）'
@@ -292,15 +271,9 @@ jobs:
           SSH_PUBLIC_KEY: ${{ vars.PIANO_SSH_PUBLIC_KEY }}
         run: |
           mkdir -p out/image
-          # extras 由布尔输入拼成片段名列表（数据驱动：rootfs/extras.d/<name>.list）
-          extras=""
-          [ "${{ inputs.extra_fcitx5 }}" = true ] && extras="$extras fcitx5"
-          [ "${{ inputs.extra_compression }}" = true ] && extras="$extras compression"
-          [ "${{ inputs.browser }}" = chrome ] && extras="$extras browser-chrome"
-          [ "${{ inputs.browser }}" = firefox ] && extras="$extras browser-firefox"
-          [ "${{ inputs.extra_dev_tools }}" = true ] && extras="$extras dev-tools"
-          [ "${{ inputs.extra_docker }}" = true ] && extras="$extras docker"
-          [ "${{ inputs.extra_video_accel }}" = true ] && extras="$extras video-accel"
+          # extras 由单个 input 透传（数据驱动：extras.d/<name>.list/.sh；
+          # 可用片段见 input 描述）。加个性化选项 = 加文件，本 workflow 不改。
+          extras="${{ inputs.extras }}"
           # 约定：本 job 只产 rootfs 树（含 COMPLETE 与 build-manifest），
           # kernel-images job 下载后原样恢复，脚本契约不变。
           bash -x ci/build.sh --stage rootfs \
