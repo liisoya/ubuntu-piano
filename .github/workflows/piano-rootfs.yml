@@ -467,13 +467,17 @@ jobs:
         run: ccache --show-stats || true
 
       - name: Prune this ref's older compiler caches
+        # 记账步骤，永不该有阻塞权：默认 GITHUB_TOKEN 删缓存会 403
+        # （Resource not accessible by integration，run 38488979654 实证），
+        # 且它的失败会连带跳过后面的 upload-artifact。
         if: always()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" \
             --key piano-kde-clang- --limit 100 --json id --jq '.[].id' |
-            xargs -r -n1 gh cache delete --repo "$GITHUB_REPOSITORY"
+            xargs -r -n1 gh cache delete --repo "$GITHUB_REPOSITORY" || true
 
       - name: Save compiler cache
         if: always()
