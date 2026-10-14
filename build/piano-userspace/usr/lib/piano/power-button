@@ -1,0 +1,290 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Android-style power button, touch wake and keyboard-cover switch.
+
+Short press of the power key toggles the panel backlight; holding the key
+for LONG_PRESS seconds opens the KDE logout/power-off dialog.  The key
+is grabbed (EVIOCGRAB) so neither logind nor kwin acts on it: logind
+would power the system off, and a KWin DRM DPMS off leaves the DSI host
+dead (msm clk refcount bug — the same reason suspend stays disabled).
+
+AUTO_OFF seconds without any input (touch, key, lid) turns the backlight
+off — Android-style screen sleep.  Any touch on the panel (NT36532 THP)
+or a short power-key press wakes it again.  The display pipeline is
+never touched: no DPMS, no DRM blank, only ktz8866 brightness, so the
+DSI link stays alive and wake-up is instant and reliable.
+
+Closing the official keyboard cover over the screen (the lid hall switch,
+gpio80 behind gpio-keys) turns the backlight off; opening it restores the
+previous level.  With SUSPEND_AFTER>0 a dark screen for that long runs
+`systemctl suspend` (s2idle); 0 keeps the system awake, because the
+native display does not come back after a resume (dsi_err_worker).
+The lid device is optional — its absence never blocks the key or touch.
+
+KDE notes: auto screen locking is disabled via kscreenlockerrc
+([Daemon] Autolock=false) — the lock greeter is what used to trigger the
+fatal DPMS off a few minutes after idle.  This service is the only owner
+of screen darkness.
+"""
+import fcntl
+import glob
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+KEY_NAME = "pmic_pwrkey"
+LID_NAMES = ("hall_lid", "soc:piano-hall-ml")
+TOUCH_SUBSTR = "NT36532"
+CONF_PATH = "/etc/piano/screen.conf"
+DEFAULT_SUSPEND_AFTER = 30
+DEFAULT_AUTO_OFF = 300
+KEY_POWER = 116
+EV_KEY = 1
+EV_SW = 5
+SW_LID = 0
+LONG_PRESS = 0.8
+EVIOCGRAB = 0x40044590
+# _IOC(_IOC_READ, 'E', 0x1b, 4): the switch state bitmap
+EVIOCGSW = (2 << 30) | (4 << 16) | (0x45 << 8) | 0x1B
+EVENT = struct.Struct("llHHi")
+
+
+def log(msg):
+    print(f"power-button: {msg}", file=sys.stderr, flush=True)
+
+
+def find_device(names):
+    for path in glob.glob("/sys/class/input/event*/device/name"):
+        with open(path) as f:
+            if f.read().strip() in names:
+                return "/dev/input/" + path.split("/")[4]
+    return None
+
+
+def find_touch():
+    for path in glob.glob("/sys/class/input/event*/device/name"):
+        with open(path) as f:
+            if TOUCH_SUBSTR in f.read():
+                return "/dev/input/" + path.split("/")[4]
+    return None
+
+
+def conf_int(key, default):
+    """Read KEY=VALUE pairs from screen.conf; default when absent."""
+    try:
+        with open(CONF_PATH) as f:
+            for line in f:
+                k, _, v = line.partition("=")
+                if k.strip() == key:
+                    return max(0, int(v.strip() or 0))
+    except (OSError, ValueError):
+        pass
+    return default
+
+
+def suspend_after():
+    """Seconds of dark screen before suspend; 0 disables."""
+    return conf_int("SUSPEND_AFTER", DEFAULT_SUSPEND_AFTER)
+
+
+def auto_off():
+    """Seconds of idle before the backlight goes off; 0 disables."""
+    return conf_int("AUTO_OFF", DEFAULT_AUTO_OFF)
+
+
+def find_backlight():
+    names = sorted(os.listdir("/sys/class/backlight"))
+    return names[0] if names else None
+
+
+def brightness(bl):
+    with open(f"/sys/class/backlight/{bl}/brightness") as f:
+        return int(f.read())
+
+
+def set_brightness(bl, value):
+    subprocess.run(
+        ["gdbus", "call", "--system", "--dest", "org.freedesktop.login1",
+         "--object-path", "/org/freedesktop/login1/session/auto",
+         "--method", "org.freedesktop.login1.Session.SetBrightness",
+         "backlight", bl, str(value)],
+        stdout=subprocess.DEVNULL, check=False)
+
+
+def power_dialog():
+    subprocess.run(
+        ["gdbus", "call", "--session", "--dest", "org.kde.LogoutPrompt",
+         "--object-path", "/LogoutPrompt",
+         "--method", "org.kde.LogoutPrompt.promptLogout"],
+        stdout=subprocess.DEVNULL, check=False)
+
+
+def lid_closed(fd):
+    sw = bytearray(4)
+    try:
+        fcntl.ioctl(fd, EVIOCGSW, sw, True)
+        return bool(sw[0] & (1 << SW_LID))
+    except OSError:
+        return False
+
+
+class Screen:
+    """Backlight on/off with one remembered level, plus the suspend timer."""
+
+    def __init__(self):
+        self.saved = None
+        self.lidfd = None
+        self.suspend_at = None
+
+    def off(self):
+        bl = find_backlight()
+        if bl is None:
+            return
+        if self.saved is None:
+            self.saved = brightness(bl) or 1
+            set_brightness(bl, 0)
+        self.arm_suspend()
+
+    def toggle(self):
+        bl = find_backlight()
+        if bl is None:
+            return
+        if self.saved is None:
+            self.off()
+        else:
+            self.wake()
+
+    def wake(self):
+        bl = find_backlight()
+        if bl is not None and self.saved is not None:
+            set_brightness(bl, self.saved)
+        self.saved = None
+        self.suspend_at = None
+
+    def arm_suspend(self):
+        seconds = suspend_after()
+        if seconds > 0:
+            self.suspend_at = time.monotonic() + seconds
+        else:
+            self.suspend_at = None
+
+    def suspend_due(self):
+        """Suspend if the dark timeout has passed; blocks through resume."""
+        if self.suspend_at is None or self.saved is None:
+            self.suspend_at = None
+            return False
+        if time.monotonic() < self.suspend_at:
+            return False
+        self.suspend_at = None
+        log("dark for %d s: suspending (s2idle)" % suspend_after())
+        subprocess.run(["systemctl", "suspend"],
+                       stdout=subprocess.DEVNULL, check=False)
+        # Resumed.  With the cover still closed, go dark and arm again;
+        # the level was already saved while the screen was off.
+        if self.lidfd is not None and lid_closed(self.lidfd):
+            bl = find_backlight()
+            if bl is not None and self.saved is not None:
+                set_brightness(bl, 0)
+            self.arm_suspend()
+            log("resumed with the cover closed: armed again")
+        else:
+            log("resumed")
+        return True
+
+
+def open_key():
+    dev = None
+    while dev is None:
+        dev = find_device((KEY_NAME,))
+        if dev is None:
+            time.sleep(2)
+    return dev, os.open(dev, os.O_RDONLY)
+
+
+def main():
+    keydev, keyfd = open_key()
+    try:
+        fcntl.ioctl(keyfd, EVIOCGRAB, 1)
+    except OSError as e:
+        log(f"cannot grab {keydev}: {e}")
+
+    screen = Screen()
+    lidfd, liddev = None, None
+    touchfd, touchdev = None, None
+    pressed_at = None
+    last_activity = time.monotonic()
+    while True:
+        fds = [keyfd]
+        for extra in (lidfd, touchfd):
+            if extra is not None:
+                fds.append(extra)
+        timeout = None
+        if pressed_at is not None:
+            timeout = max(0.0, pressed_at + LONG_PRESS - time.monotonic())
+        if screen.suspend_at is not None:
+            until = max(0.0, screen.suspend_at - time.monotonic())
+            timeout = until if timeout is None else min(timeout, until)
+        idle = auto_off()
+        if idle > 0 and screen.saved is None:
+            until = max(0.0, last_activity + idle - time.monotonic())
+            timeout = until if timeout is None else min(timeout, until)
+        if lidfd is None or touchfd is None:
+            # Keep polling for late hot-plug devices (touch is probed
+            # after piano-touch.service brings the panel up).
+            timeout = 2.0 if timeout is None else min(timeout, 2.0)
+        ready, _, _ = select.select(fds, [], [], timeout)
+        now = time.monotonic()
+        for fd in ready:
+            data = os.read(fd, EVENT.size * 64)
+            for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, etype, code, value = EVENT.unpack_from(data, off)
+                if fd == keyfd and (etype, code) == (EV_KEY, KEY_POWER):
+                    if value == 1:
+                        pressed_at = now
+                    elif value == 0 and pressed_at is not None:
+                        pressed_at = None
+                        screen.toggle()
+                elif fd == lidfd and (etype, code) == (EV_SW, SW_LID):
+                    if value:
+                        screen.off()
+                    else:
+                        screen.wake()
+                elif fd == touchfd and etype in (EV_KEY, 3):
+                    # Any touch: wake when dark; always counts as activity.
+                    if screen.saved is not None:
+                        log("touch: waking the backlight")
+                        screen.wake()
+        if ready:
+            last_activity = time.monotonic()
+        if not ready and pressed_at is not None:
+            # Held long enough: show the dialog without waiting for release.
+            pressed_at = None
+            screen.wake()
+            power_dialog()
+            continue
+        if lidfd is None:
+            liddev = find_device(LID_NAMES)
+            if liddev is not None:
+                lidfd = os.open(liddev, os.O_RDONLY)
+                screen.lidfd = lidfd
+                if lid_closed(lidfd):
+                    screen.off()
+                log(f"watching the lid switch on {liddev}")
+        if touchfd is None:
+            touchdev = find_touch()
+            if touchdev is not None:
+                touchfd = os.open(touchdev, os.O_RDONLY)
+                log(f"watching the touchscreen on {touchdev}")
+        if screen.suspend_due():
+            continue  # re-evaluate timeouts after the resume
+        if (idle > 0 and screen.saved is None
+                and time.monotonic() - last_activity >= idle):
+            log(f"idle for {idle} s: backlight off")
+            screen.off()
+
+
+if __name__ == "__main__":
+    main()

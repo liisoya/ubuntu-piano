@@ -1,0 +1,16 @@
+Package: firmware-piano
+Version: 0.1.0
+Section: kernel
+Priority: optional
+Architecture: all
+Maintainer: liisoya <liisoya@users.noreply.github.com>
+Conflicts: linux-firmware
+Replaces: linux-firmware
+Provides: linux-firmware
+Description: Xiaomi Pad 8 Pro (piano) device firmware
+ ath12k WiFi (PEACH hw2.0), adsp/cdsp MPDs, novatek touch firmware,
+ qca bluetooth and other device firmware for piano mainline Linux.
+ The binary payloads are fetched at build time from
+ blu-sharky/piano-firmware (this package ships the skeleton only);
+ firmware blobs are (c) Qualcomm/Xiaomi and friends, for use on the
+ owner's own device.

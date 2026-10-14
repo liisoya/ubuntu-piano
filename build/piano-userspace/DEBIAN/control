@@ -1,0 +1,13 @@
+Package: piano-userspace
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: arm64
+Maintainer: liisoya <liisoya@users.noreply.github.com>
+Depends: kmod, systemd
+Description: Xiaomi Pad 8 Pro (piano) userspace runtime pieces
+ Device runtime scripts and data for piano mainline Linux:
+ piano-* systemd services (adsp/audio/camera/cpufreq/display/keyboard/
+ radio/swapfile/touch/usb/video), ALSA UCM2 for Xiaomi Pad 8 Pro,
+ modprobe/modules-load/udev rules, piano-touch-view, piano-camerad
+ and busybox. Consumed by the ubuntu-sheng-style chroot build.
