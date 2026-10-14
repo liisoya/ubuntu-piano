@@ -342,6 +342,7 @@ jobs:
         env:
           SSH_PUBLIC_KEY: ${{ vars.PIANO_SSH_PUBLIC_KEY }}
         run: |
+          mkdir -p out
           key_args=()
           if [ -n "$SSH_PUBLIC_KEY" ]; then
             printf '%s\n' "$SSH_PUBLIC_KEY" > out/authorized_keys
