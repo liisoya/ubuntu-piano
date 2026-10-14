@@ -549,17 +549,20 @@ jobs:
 
       - name: Write Build Environment
         run: |
-          printf '%s\n' \
-            "HOSTNAME=${{ inputs.hostname }}" \
-            "USERNAME=${{ inputs.username }}" \
-            "LANGUAGE=${{ inputs.language }}" \
-            "AUTOLOGIN=${{ inputs.autologin }}" \
-            "DESKTOP=${{ inputs.desktop }}" \
-            "PARTITION_LABEL=${{ steps.parse.outputs.label }}" \
-            "QUIET_BOOT=${{ steps.parse.outputs.quiet_boot_enabled }}" \
-            "EXTRAS=${{ inputs.extras }}" \
-            "KVER=${{ env.KVER }}" \
-            | sudo tee "$ROOTFS_MOUNT/root/build.env" > /dev/null
+          # build.env 会被 bash `source`（distro-env.sh: set -a; . /root/build.env）。
+          # 值必须经 %q 转义，否则带空格的值（"KDE Plasma"）source 时会把第二个词
+          # 当命令执行（run 38532842201 实录：line 5: Plasma: command not found → 127）。
+          {
+            printf 'HOSTNAME=%q\n' "${{ inputs.hostname }}"
+            printf 'USERNAME=%q\n' "${{ inputs.username }}"
+            printf 'LANGUAGE=%q\n' "${{ inputs.language }}"
+            printf 'AUTOLOGIN=%q\n' "${{ inputs.autologin }}"
+            printf 'DESKTOP=%q\n' "${{ inputs.desktop }}"
+            printf 'PARTITION_LABEL=%q\n' "${{ steps.parse.outputs.label }}"
+            printf 'QUIET_BOOT=%q\n' "${{ steps.parse.outputs.quiet_boot_enabled }}"
+            printf 'EXTRAS=%q\n' "${{ inputs.extras }}"
+            printf 'KVER=%q\n' "${{ env.KVER }}"
+          } | sudo tee "$ROOTFS_MOUNT/root/build.env" > /dev/null
 
       - name: "[chroot] Disable snap"
         run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/15-nosnap.sh
