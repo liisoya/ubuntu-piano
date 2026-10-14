@@ -1,0 +1,10 @@
+# KDE Plasma 桌面（Ubuntu，snap-free）
+# 不使用 kubuntu-desktop（依赖 snapd）。
+plasma-desktop
+plasma-workspace
+plasma-nm
+sddm
+konsole
+dolphin
+kate
+pipewire-alsa

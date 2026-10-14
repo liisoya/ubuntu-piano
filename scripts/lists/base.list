@@ -1,0 +1,28 @@
+# 基础系统包（Ubuntu arm64，全部来自官方归档，不含任何 snap 相关包）
+# 以 # 开头的行为注释，安装脚本会自动过滤空行与注释。
+#
+# 与上游 debian-sheng “Install Base Packages” 步骤对应，差异说明：
+#   * libglib2.0-0 / libprotobuf-c1 / libqmi-glib5 / libmbim-glib4 / libyaml-0-2 /
+#     libgudev-1.0-0 / libpolkit-gobject-1-0 不再预装：这些是本地设备 deb 的运行期依赖，
+#     交给 apt 在安装那些 deb 时自动解析（Ubuntu 24.04+ 的 t64 改名也不会再踩坑）
+#   * 不装 ubuntu-desktop / kubuntu-desktop 等元包（它们硬依赖 snapd）
+systemd
+systemd-sysv
+sudo
+kmod
+e2fsprogs
+vim
+wget
+curl
+ca-certificates
+network-manager
+openssh-server
+wpasupplicant
+dbus
+chrony
+iw
+lm-sensors
+wireless-regdb
+net-tools
+locales
+tzdata

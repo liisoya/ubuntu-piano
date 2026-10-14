@@ -1,0 +1,7 @@
+# KDE Plasma Mobile（选定 KDE Plasma 时勾选 plasma_mobile 使用）
+plasma-mobile
+plasma-workspace
+plasma-nm
+sddm
+konsole
+pipewire-alsa

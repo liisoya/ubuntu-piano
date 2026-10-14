@@ -1,0 +1,495 @@
+name: Build RootFS (Ubuntu)
+
+# 为小米平板 6S Pro (sheng, SM8550) 构建 Ubuntu rootfs.img + boot.img
+#
+# 结构说明（与上游 ianchb/debian-sheng 的差异）：
+#   * 设备功能包的构建抽到可复用工作流 .github/workflows/_packages.yml，
+#     本文件只负责"组装 rootfs"，避免上游那种每个 workflow 复制一份 600 行作业
+#   * 具体构建步骤全部放在 scripts/ 下的脚本里（宿主 scripts/host、镜像内 scripts/in-chroot），
+#     YAML 仅做编排与参数传递
+#   * 上游的 rootfs-lite.yml（测试用、不上传）在这里合并为一个输入项 upload_artifacts
+#   * Ubuntu 侧硬性要求：完全禁用 snap（见 scripts/in-chroot/15-nosnap.sh 与 90-verify.sh）
+on:
+  workflow_dispatch:
+    inputs:
+      ubuntu_series:
+        description: 'Ubuntu 版本'
+        required: true
+        type: choice
+        default: '26.04 (resolute)'
+        options:
+          - '26.04 (resolute)'
+          - '26.10 (stonking)'
+          - '25.10 (questing)'
+      desktop:
+        description: '桌面环境（server 为无图形界面；Lomiri = 原 Ubuntu Touch 的 Unity8，为触屏平板设计）'
+        required: true
+        type: choice
+        default: 'KDE Plasma'
+        options:
+          - 'KDE Plasma'
+          - 'GNOME'
+          - 'Lomiri'
+          - 'server'
+      plasma_mobile:
+        description: '使用 plasma-mobile 替代 plasma-desktop（仅 KDE Plasma 生效）'
+        required: false
+        type: boolean
+        default: false
+      browser:
+        description: '浏览器（Ubuntu 主归档的 firefox 是 snap 过渡包，选择 firefox 将从 Mozilla 官方 apt 源安装 deb 版）'
+        required: false
+        type: choice
+        default: 'none'
+        options:
+          - 'none'
+          - 'firefox'
+      autologin:
+        description: '自动登录（Lomiri 经 greetd 恒为自动登录，本项对它无效）'
+        required: false
+        type: boolean
+        default: true
+      username:
+        description: '普通用户名'
+        required: false
+        type: string
+        default: 'username'
+      hostname:
+        description: '主机名'
+        required: false
+        type: string
+        default: 'xiaomi-sheng'
+      password:
+        description: '镜像密码（留空则用 ROOTFS_PASSWORD secret，都为空则为默认 password）；注意输入值会明文显示在运行页面'
+        required: false
+        type: string
+        default: ''
+      language:
+        description: '系统语言（locale）'
+        required: false
+        type: choice
+        default: 'None (C.UTF-8)'
+        options:
+          - 'None (C.UTF-8)'
+          - 'en_US.UTF-8'
+          - 'zh_CN.UTF-8'
+          - 'zh_TW.UTF-8'
+          - 'ja_JP.UTF-8'
+          - 'ko_KR.UTF-8'
+          - 'de_DE.UTF-8'
+          - 'fr_FR.UTF-8'
+          - 'es_ES.UTF-8'
+          - 'ru_RU.UTF-8'
+      boot_mode:
+        description: '启动分区模式'
+        required: true
+        type: choice
+        default: 'dual (linux)'
+        options:
+          - 'dual (linux)'
+          - 'single (userdata)'
+          - 'custom'
+      custom_partition:
+        description: '自定义分区名（仅 boot_mode=custom 时需要）'
+        required: false
+        type: string
+        default: ''
+      quiet_boot:
+        description: '安静启动（Plymouth，server 模式忽略）'
+        required: false
+        type: boolean
+        default: true
+      kernel_source:
+        description: '内核来源（custom 分区模式不支持 prebuilt）'
+        required: true
+        type: choice
+        default: 'prebuilt'
+        options:
+          - 'prebuilt'
+          - 'custom_build'
+      kernel_repo:
+        description: '自定义内核仓库（kernel_source=custom_build 时使用）'
+        required: false
+        type: string
+        default: 'https://github.com/ianchb/sm8550-mainline'
+      kernel_branch:
+        description: '内核分支'
+        required: false
+        type: string
+        default: 'sheng-7.2.6'
+      kernel_config:
+        description: '内核配置文件（仓库内文件名）'
+        required: false
+        type: string
+        default: 'sm8550.config'
+      kernel_release:
+        description: 'prebuilt 内核取哪个 release（留空则取最新；固定版本可复现构建）'
+        required: false
+        type: string
+        default: '7.2.6'
+      firmware_repo:
+        description: '设备固件仓库'
+        required: false
+        type: string
+        default: 'https://github.com/ianchb/sheng-firmware'
+      firmware_branch:
+        description: '固件仓库分支'
+        required: false
+        type: string
+        default: 'master'
+      rootfs_size:
+        description: 'rootfs.img 初始大小（构建后会收缩，首启自动扩容）'
+        required: false
+        type: string
+        default: '10G'
+      shrink_image:
+        description: '构建后收缩镜像（e2fsck + resize2fs -M）'
+        required: false
+        type: boolean
+        default: true
+      upload_artifacts:
+        description: '上传 rootfs.img / boot.img（测试时可关闭）'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+jobs:
+  packages:
+    name: Build Device Packages
+    uses: ./.github/workflows/_packages.yml
+    with:
+      kernel_source: ${{ inputs.kernel_source }}
+      kernel_repo: ${{ inputs.kernel_repo }}
+      kernel_branch: ${{ inputs.kernel_branch }}
+      kernel_config: ${{ inputs.kernel_config }}
+      firmware_repo: ${{ inputs.firmware_repo }}
+      firmware_branch: ${{ inputs.firmware_branch }}
+
+  build-rootfs:
+    name: Assemble Ubuntu RootFS
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    needs: [packages]
+    env:
+      ROOTFS_MOUNT: /mnt/rootfs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify Arguments
+        env:
+          IN_PASSWORD: ${{ inputs.password }}
+          SECRET_PASSWORD: ${{ secrets.ROOTFS_PASSWORD }}
+        run: |
+          # 密码优先级：password 输入项 > ROOTFS_PASSWORD secret > 默认 password。
+          # 输入项不是 secret（会明文显示在本次运行的输入摘要里），因此立刻 add-mask，
+          # 保证它不会出现在后续任何日志中。
+          if [ -n "$IN_PASSWORD" ]; then
+            echo "::add-mask::$IN_PASSWORD"
+            PASSWORD="$IN_PASSWORD"
+            echo "镜像密码取自 password 输入项（该值会显示在本页面的输入摘要中，介意请改用 ROOTFS_PASSWORD secret）"
+          elif [ -n "$SECRET_PASSWORD" ]; then
+            echo "镜像密码取自 ROOTFS_PASSWORD secret"
+            PASSWORD="$SECRET_PASSWORD"
+          else
+            echo "::warning::未设置密码（password 输入与 ROOTFS_PASSWORD secret 均为空），镜像将使用不安全的默认密码 password"
+            PASSWORD=""
+          fi
+          case "$PASSWORD" in
+            *$'\n'*) echo "::error::密码不能包含换行"; exit 1 ;;
+          esac
+          echo "ROOTFS_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+          if [ "${{ inputs.boot_mode }}" = "custom" ]; then
+            if [ "${{ inputs.kernel_source }}" != "custom_build" ]; then
+              echo "::error::boot_mode=custom 必须搭配 kernel_source=custom_build"
+              exit 1
+            fi
+            if [ -z "${{ inputs.custom_partition }}" ]; then
+              echo "::error::boot_mode=custom 时必须填写 custom_partition"
+              exit 1
+            fi
+          fi
+
+          # 自由文本输入会被写进镜像内的 /root/build.env 并参与 shell 片段拼接，
+          # 这里做白名单校验（与 archlinux-sheng 的校验保持一致）
+          case "${{ inputs.custom_partition }}" in
+            "") : ;;
+            *[!a-zA-Z0-9_-]*) echo "::error::custom_partition 只允许字母数字与 _ -（PARTLABEL 名）"; exit 1 ;;
+          esac
+          case "${{ inputs.username }}" in
+            ""|*[!a-zA-Z0-9_.-]*) echo "::error::username 只允许字母数字与 _ . -"; exit 1 ;;
+          esac
+          case "${{ inputs.hostname }}" in
+            ""|*[!a-zA-Z0-9.-]*) echo "::error::hostname 只允许字母数字与 . -"; exit 1 ;;
+          esac
+          case "${{ inputs.rootfs_size }}" in
+            ""|*[!0-9GgMmKk]*) echo "::error::rootfs_size 只允许形如 10G / 8192M 的取值"; exit 1 ;;
+          esac
+
+      - name: Parse Arguments
+        id: parse
+        run: |
+          SERIES="${{ inputs.ubuntu_series }}"
+          SERIES="${SERIES%% *}"
+
+          QUIET="false"
+          if [ "${{ inputs.quiet_boot }}" = "true" ] && [ "${{ inputs.desktop }}" != "server" ]; then
+            QUIET="true"
+          fi
+
+          case "${{ inputs.boot_mode }}" in
+            "single (userdata)")
+              LABEL="userdata"
+              if [ "$QUIET" = "true" ]; then PATTERN="boot_sheng_singleboot_plymouth.img"; else PATTERN="boot_sheng_singleboot.img"; fi
+              ;;
+            "dual (linux)")
+              LABEL="linux"
+              if [ "$QUIET" = "true" ]; then PATTERN="boot_sheng_dualboot_plymouth.img"; else PATTERN="boot_sheng_dualboot.img"; fi
+              ;;
+            "custom")
+              LABEL="${{ inputs.custom_partition }}"
+              PATTERN=""
+              ;;
+            *)
+              echo "::error::未知的 boot_mode: ${{ inputs.boot_mode }}"
+              exit 1
+              ;;
+          esac
+
+          SLUG="$(printf '%s' "${{ inputs.desktop }}" | tr ' ' '-')"
+
+          {
+            echo "series=${SERIES}"
+            echo "label=${LABEL}"
+            echo "quiet_boot_enabled=${QUIET}"
+            echo "boot_img_pattern=${PATTERN}"
+            echo "desktop_slug=${SLUG}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Ubuntu $SERIES / ${{ inputs.desktop }} / 分区 $LABEL / quiet=$QUIET"
+
+      - name: Install Host Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mmdebstrap curl git e2fsprogs
+
+      - name: "[Prebuilt] Download Kernel & boot.img"
+        if: inputs.kernel_source != 'custom_build'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOT_IMG_PATTERN: ${{ steps.parse.outputs.boot_img_pattern }}
+          KERNEL_RELEASE: ${{ inputs.kernel_release }}
+        run: |
+          chmod +x scripts/host/10-fetch-kernel.sh
+          ./scripts/host/10-fetch-kernel.sh
+
+      - name: "[Custom] Download Kernel Package"
+        if: inputs.kernel_source == 'custom_build'
+        uses: actions/download-artifact@v8
+        with:
+          name: kernel-custom-deb
+          path: debs
+
+      - name: "[Custom] Download Kernel Image"
+        if: inputs.kernel_source == 'custom_build'
+        uses: actions/download-artifact@v8
+        with:
+          name: kernel-custom-image
+
+      - name: "[Custom] Generate boot.img"
+        if: inputs.kernel_source == 'custom_build'
+        env:
+          PARTITION_LABEL: ${{ steps.parse.outputs.label }}
+          QUIET_BOOT: ${{ steps.parse.outputs.quiet_boot_enabled }}
+        run: |
+          chmod +x scripts/host/11-make-bootimg.sh
+          ./scripts/host/11-make-bootimg.sh Image.gz-dtb_sheng
+
+      - name: Collect fastrpc
+        uses: actions/download-artifact@v8
+        with: { name: fastrpc-deb, path: debs }
+      - name: Collect libssc
+        uses: actions/download-artifact@v8
+        with: { name: libssc-deb, path: debs }
+      - name: Collect iio-sensor-proxy
+        uses: actions/download-artifact@v8
+        with: { name: iio-sensor-proxy-deb, path: debs }
+      - name: Collect sheng-sensors
+        uses: actions/download-artifact@v8
+        with: { name: sheng-sensors-deb, path: debs }
+      - name: Collect sheng-devauth
+        uses: actions/download-artifact@v8
+        with: { name: sheng-devauth-deb, path: debs }
+      - name: Collect alsa-xiaomi-sheng
+        uses: actions/download-artifact@v8
+        with: { name: alsa-xiaomi-sheng-deb, path: debs }
+      - name: Collect firmware-xiaomi-sheng
+        uses: actions/download-artifact@v8
+        with: { name: firmware-xiaomi-sheng-deb, path: debs }
+      - name: Collect xiaomi-* packages
+        uses: actions/download-artifact@v8
+        with: { name: xiaomi-debs, path: debs }
+
+      - name: Verify Collected Packages
+        run: |
+          count="$(find debs -maxdepth 1 -name '*.deb' | wc -l)"
+          echo "共收集到 ${count} 个 deb："
+          ls -lh debs/ | sed 's/^/    /'
+
+          # 逐个断言必需包（不能用"总数 >= N"这种松阈值：丢一个 artifact 也照样通过）
+          missing=0
+          for p in linux-xiaomi-sheng fastrpc libssc iio-sensor-proxy sheng-sensors \
+                   sheng-devauth alsa-xiaomi-sheng firmware-xiaomi-sheng; do
+            if ! compgen -G "debs/${p}*.deb" >/dev/null; then
+              echo "::error::缺少必需的设备包: ${p}"
+              missing=1
+            fi
+          done
+
+          xiaomi="$(find debs -maxdepth 1 -name 'xiaomi-*.deb' | wc -l)"
+          echo "xiaomi-* 包: ${xiaomi} 个"
+          if [ "$xiaomi" -lt 6 ]; then
+            echo "::warning::xiaomi-* 包少于 6 个（${xiaomi}）：快充/充电模式/触控/手写笔/指纹/键盘 中会有功能缺失"
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          if [ ! -f boot.img ]; then
+            echo "::error::缺少 boot.img"
+            exit 1
+          fi
+
+      - name: Create & Mount RootFS Image
+        run: |
+          chmod +x scripts/host/00-prepare-image.sh
+          sudo bash scripts/host/00-prepare-image.sh rootfs.img "${{ inputs.rootfs_size }}" "$ROOTFS_MOUNT"
+
+      - name: Bootstrap Ubuntu Base
+        run: |
+          chmod +x scripts/host/01-bootstrap.sh
+          sudo env DISTRO_SERIES="${{ steps.parse.outputs.series }}" \
+            bash scripts/host/01-bootstrap.sh "$ROOTFS_MOUNT"
+
+      - name: Mount Chroot Environment
+        run: |
+          chmod +x scripts/host/02-mount-chroot.sh
+          sudo bash scripts/host/02-mount-chroot.sh "$ROOTFS_MOUNT"
+
+      - name: Write Build Environment
+        env:
+          DISTRO_SERIES: ${{ steps.parse.outputs.series }}
+        run: |
+          sudo tee "$ROOTFS_MOUNT/root/build.env" >/dev/null <<EOF
+          DISTRO_SERIES='${DISTRO_SERIES}'
+          DESKTOP='${{ inputs.desktop }}'
+          PLASMA_MOBILE='${{ inputs.plasma_mobile }}'
+          BROWSER='${{ inputs.browser }}'
+          AUTOLOGIN='${{ inputs.autologin }}'
+          USERNAME='${{ inputs.username }}'
+          HOSTNAME='${{ inputs.hostname }}'
+          LANGUAGE='${{ inputs.language }}'
+          QUIET_BOOT='${{ steps.parse.outputs.quiet_boot_enabled }}'
+          BOOT_MODE='${{ inputs.boot_mode }}'
+          PARTITION_LABEL='${{ steps.parse.outputs.label }}'
+          KERNEL_SOURCE='${{ inputs.kernel_source }}'
+          EOF
+          sudo chmod 600 "$ROOTFS_MOUNT/root/build.env"
+          echo "build.env 内容："
+          sudo cat "$ROOTFS_MOUNT/root/build.env" | sed 's/^/    /'
+
+      - name: "[chroot] Disable snap"
+        run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/15-nosnap.sh
+
+      - name: "[chroot] Install Base Packages"
+        run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/10-base.sh
+
+      - name: "[chroot] Install Desktop"
+        run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/20-desktop.sh
+
+      - name: "[chroot] Install Browser"
+        run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/25-browser.sh
+
+      - name: "[chroot] Install Device Packages"
+        run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/30-device-packages.sh
+
+      - name: Prepare Password File
+        run: |
+          # ROOTFS_PASSWORD 由 Verify Arguments 写入 $GITHUB_ENV（password 输入项 > secret > 空）
+          if [ -n "${ROOTFS_PASSWORD:-}" ]; then
+            printf '%s' "$ROOTFS_PASSWORD" | sudo tee "$ROOTFS_MOUNT/root/build.pw" >/dev/null
+            sudo chmod 600 "$ROOTFS_MOUNT/root/build.pw"
+          else
+            echo "::warning::未设置密码，镜像密码将是 password"
+          fi
+
+      - name: "[chroot] Configure System"
+        run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/40-system-config.sh
+
+      - name: "[chroot] Verify Image"
+        run: sudo chroot "$ROOTFS_MOUNT" /root/piano-build/in-chroot/90-verify.sh
+
+      - name: Cleanup Host Files
+        if: always()
+        run: |
+          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf" 2>/dev/null || true
+          sudo rm -f "$ROOTFS_MOUNT/root/build.pw" 2>/dev/null || true
+          # 构建脚本与 deb 载荷不该留在出厂镜像里（90-verify 已跑完，可以安全删除）
+          sudo rm -rf "$ROOTFS_MOUNT/root/piano-build" 2>/dev/null || true
+          sudo rm -rf "$ROOTFS_MOUNT/tmp/debs" 2>/dev/null || true
+
+      - name: Unmount Virtual File Systems
+        if: always()
+        run: sudo bash scripts/host/03-umount-chroot.sh "$ROOTFS_MOUNT"
+
+      - name: Finalize Image
+        if: success()
+        run: |
+          chmod +x scripts/host/04-finalize-image.sh
+          sudo env SHRINK_IMAGE="${{ inputs.shrink_image }}" \
+            bash scripts/host/04-finalize-image.sh rootfs.img "$ROOTFS_MOUNT"
+
+      - name: Upload RootFS Image
+        if: success() && inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: rootfs-ubuntu-${{ steps.parse.outputs.series }}-${{ steps.parse.outputs.desktop_slug }}-${{ steps.parse.outputs.label }}
+          path: rootfs.img
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: error
+
+      - name: Upload Boot Image
+        if: success() && inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: boot-ubuntu-${{ steps.parse.outputs.series }}-${{ steps.parse.outputs.desktop_slug }}-${{ steps.parse.outputs.label }}
+          path: boot.img
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: warn
+
+      - name: Build Summary
+        if: always()
+        run: |
+          {
+            echo "## Ubuntu RootFS 构建结果"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| Ubuntu | ${{ inputs.ubuntu_series }} |"
+            echo "| 桌面环境 | ${{ inputs.desktop }}${{ inputs.plasma_mobile && ' (plasma-mobile)' || '' }} |"
+            echo "| 浏览器 | ${{ inputs.browser }} |"
+            echo "| 分区（PARTLABEL） | ${{ steps.parse.outputs.label }} |"
+            echo "| 内核来源 | ${{ inputs.kernel_source }} |"
+            echo "| quiet boot | ${{ steps.parse.outputs.quiet_boot_enabled }} |"
+            echo "| snap | 已禁用（snapd 不安装，nosnap.pref 已写入，构建末尾硬校验） |"
+            echo "| rootfs.img | $(du -h rootfs.img 2>/dev/null | cut -f1 || echo 'N/A') |"
+            echo "| boot.img | $(du -h boot.img 2>/dev/null | cut -f1 || echo 'N/A') |"
+            echo "| 设备包数量 | $(find debs -maxdepth 1 -name '*.deb' 2>/dev/null | wc -l) |"
+          } >> "$GITHUB_STEP_SUMMARY"

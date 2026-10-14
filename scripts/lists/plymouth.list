@@ -1,0 +1,4 @@
+# Plymouth 开机画面（仅 quiet_boot=true 且 desktop != server 时安装）
+# 主题包：GNOME 用 plymouth-themes；KDE 追加 breeze 主题与配置工具
+plymouth
+plymouth-themes

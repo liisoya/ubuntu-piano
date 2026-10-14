@@ -1,0 +1,13 @@
+# GNOME 桌面（Ubuntu，snap-free）
+# 刻意不使用 ubuntu-desktop / ubuntu-desktop-minimal：它们依赖 snapd 与
+# snap 版 firefox，会在镜像里引入 snap 运行时。
+gnome-shell
+gnome-session
+gnome-terminal
+gnome-control-center
+gnome-keyring
+nautilus
+gnome-tweaks
+xdg-desktop-portal-gnome
+gdm3
+pipewire-alsa

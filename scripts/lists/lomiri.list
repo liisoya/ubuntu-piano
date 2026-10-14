@@ -1,0 +1,21 @@
+# Lomiri（原 Ubuntu Touch 的 Unity8 外壳）的辅助包。
+#
+# 会话本体（lomiri / lomiri-desktop-session）不放这里：它们是硬性要求，由
+# 20-desktop.sh 直接 apt_install 并断言，缺了就没有意义。本列表只放
+# “缺了不影响启动、但少了体验会残”的那些，因此走 best_effort。
+#
+# 显示栈是 Mir + Qt/QML 直接走 DRM/KMS，不需要 libhybris / Android vendor 层 ——
+# 这正是它区别于 Sailfish / Droidian 的地方，纯 mainline 内核就能跑。
+#
+# 注意：不要加 lomiri-greeter。那个包是 **LightDM** 的 greeter（装的是
+# /etc/lightdm/lightdm.conf.d/ 与 lightdm/greeters/），对 greetd 没有用处。
+lomiri-system-settings
+lomiri-keyboard
+debian-lomiri-default-settings
+greetd
+network-manager
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+fonts-noto-cjk

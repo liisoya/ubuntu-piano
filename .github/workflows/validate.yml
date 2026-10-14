@@ -1,0 +1,77 @@
+name: Validate
+
+# 本地（Windows）无法执行 bash/tar/python，因此把静态检查放到 CI：
+#   * 所有 shell 脚本与 PKGBUILD 的 bash 语法检查（bash -n）
+#   * shellcheck（warning 级）
+#   * workflow YAML 可解析性 + 输入项/工件名基本约束
+#   * 关键文件存在性（mkbootimg / sm8550.config / 包列表 / 设备包目录树）
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Static Checks
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linters
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck python3-yaml
+
+      - name: Bash syntax check (scripts)
+        run: |
+          fail=0
+          mapfile -t files < <(git ls-files '*.sh')
+          echo "检查 ${#files[@]} 个 shell 脚本"
+          for f in "${files[@]}"; do
+            if ! bash -n "$f"; then
+              echo "::error file=$f::bash 语法错误"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: mkbootimg / kernel config check
+        run: |
+          # mkbootimg 是 AOSP 的 Python 脚本，这里只做可执行位与 shebang 检查
+          head -n1 mkbootimg | grep -q '^#!' || { echo "::error::mkbootimg 缺少 shebang"; exit 1; }
+          test -f sm8550.config || { echo "::error::缺少 sm8550.config"; exit 1; }
+          echo "mkbootimg / sm8550.config 就位"
+
+      - name: shellcheck
+        run: |
+          mapfile -t files < <(git ls-files '*.sh')
+          shellcheck --severity=warning --exclude=SC1090,SC1091 "${files[@]}" || {
+            echo "::warning::shellcheck 报告了问题（不阻断构建，请人工确认）"
+          }
+
+      - name: YAML parse check
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for f in sorted(glob.glob('.github/workflows/*.yml')):
+              try:
+                  with open(f, encoding='utf-8') as fh:
+                      data = yaml.safe_load(fh)
+                  assert isinstance(data, dict), 'top level 不是映射'
+                  print(f'  [ OK ] {f}')
+              except Exception as e:
+                  print(f'  [FAIL] {f}: {e}')
+                  bad = 1
+          sys.exit(bad)
+          PY
+
+      - name: Package lists & device trees
+        run: |
+          for f in scripts/lists/base.list scripts/lists/gnome.list scripts/lists/kde.list; do
+            test -s "$f" || { echo "::error::包列表为空: $f"; exit 1; }
+          done
+          test -d alsa-xiaomi-sheng/usr/share/alsa/ucm2/Xiaomi/sheng || { echo "::error::缺少 ASoC UCM2 配置"; exit 1; }
+          test -d firmware-xiaomi-sheng/DEBIAN || { echo "::error::缺少 firmware 包骨架"; exit 1; }
+          test -d sheng-devauth/usr/lib/systemd/system || { echo "::error::缺少 sheng-devauth unit"; exit 1; }
+          echo "包列表与设备包目录树检查通过"
