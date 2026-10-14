@@ -66,11 +66,20 @@ fi
 # 4) 设备功能包关键文件
 # 路径以"哪个 deb 真的提供什么"为准（dpkg-deb -c 实证，2026-10-14）：
 #   fastrpc-support      → /usr/sbin/adsprpcd（sheng 时代的 /usr/bin/ 是旧账）
-#   piano-userspace      → /usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi（音频 UCM）
+#   piano-userspace      → Qualcomm/sm8750/Xiaomi-Pad-8-Pro/{Xiaomi-Pad-8-Pro,HiFi}.conf 实体配置
+#                          + conf.d/sm8750/"Xiaomi Pad 8 Pro.conf" 软链（alsa-ucm2 查表入口；
+#                            文件名含空格，循环必须走数组，for-in 裸列表会被词分割）
 #   piano-sensors        → adsprpcd-sensorspd.service；libssc-bin → /usr/bin/ssccli
-for f in /usr/sbin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/ssccli \
-         /usr/lib/systemd/system/adsprpcd-sensorspd.service \
-         /usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi; do
+key_files=(
+  /usr/sbin/adsprpcd
+  /usr/libexec/iio-sensor-proxy
+  /usr/bin/ssccli
+  /usr/lib/systemd/system/adsprpcd-sensorspd.service
+  /usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/Xiaomi-Pad-8-Pro.conf
+  /usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
+  "/usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi Pad 8 Pro.conf"
+)
+for f in "${key_files[@]}"; do
   if [[ -e "$f" ]]; then
     pass "存在 $f"
   else
