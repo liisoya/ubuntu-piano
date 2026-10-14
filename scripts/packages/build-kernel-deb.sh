@@ -41,7 +41,7 @@ if [[ -n "$DTB_DIR" && -d "$DTB_DIR" ]]; then
   cp -a "$DTB_DIR/." "$BUILD/usr/lib/linux-image-$KVER/"
 fi
 
-cat > "$BUILD/DEBIAN/control" <<EOF
+cat > "$BUILD/DEBIAN/control" <<CONTROL
 Package: $PKG
 Version: $KVER
 Section: kernel
@@ -53,3 +53,19 @@ Description: Linux kernel $KVER for Xiaomi Pad 8 Pro (piano)
  patch series. Provides /boot/vmlinuz-$KVER and /lib/modules/$KVER.
  Built from blu-sharky/linux-piano; see the builder MANIFEST for the
  exact commit/config provenance.
+CONTROL
+
+cat > "$BUILD/DEBIAN/postinst" <<POSTINST
+#!/bin/sh
+set -e
+depmod -a "$KVER"
+POSTINST
+chmod 755 "$BUILD/DEBIAN/postinst"
+
+# 权限纪律
+find "$BUILD" -type d -exec chmod 755 {} +
+find "$BUILD/lib/modules" -type f -exec chmod 644 {} +
+chmod 644 "$BUILD/boot/vmlinuz-$KVER"
+
+dpkg-deb --build --root-owner-group "$BUILD" "$OUT"
+echo "[build-kernel-deb] 产出 $OUT ($(du -h "$OUT" | cut -f1))"
