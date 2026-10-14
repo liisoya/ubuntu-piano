@@ -361,7 +361,7 @@ jobs:
 
       - name: Generate boot.img + dtbo.img (AVB)
         run: |
-          O="$GITHUB_WORKSPACE/workspace/linux-piano/out"
+          O="$GITHUB_WORKSPACE/workspace/linux-piano/out/rootfs-image"
           K="$GITHUB_WORKSPACE/workspace/linux-piano"
           debian-piano/scripts/build-test-bootimg.sh \
             --kernel-dir "$O" --output-dir "$GITHUB_WORKSPACE/out/image" \
@@ -372,7 +372,7 @@ jobs:
 
       - name: Pack kernel deb
         run: |
-          KVER="$(cat workspace/linux-piano/out/include/config/kernel.release)"
+          KVER="$(cat workspace/linux-piano/out/rootfs-image/include/config/kernel.release)"
           O="$GITHUB_WORKSPACE/workspace/linux-piano/out"
           sudo -E env KVER="$KVER" \
             KERNEL_DIR="$O" \
@@ -390,7 +390,7 @@ jobs:
         run: |
           mkdir -p out/bundle
           cp out/image/boot.img out/image/dtbo.img out/bundle/
-          cp workspace/linux-piano/out/.config out/bundle/kernel.config
+          cp workspace/linux-piano/out/rootfs-image/.config out/bundle/kernel.config
           cp piano_rootfs.config.diff out/bundle/ 2>/dev/null || true
           cp kernel-patches.diff out/bundle/ 2>/dev/null || true
           {
@@ -532,6 +532,7 @@ jobs:
             "PARTITION_LABEL=${{ steps.parse.outputs.label }}" \
             "QUIET_BOOT=${{ steps.parse.outputs.quiet_boot_enabled }}" \
             "EXTRAS=${{ inputs.extras }}" \
+            "KVER=${{ env.KVER }}" \
             | sudo tee "$ROOTFS_MOUNT/root/build.env" > /dev/null
 
       - name: "[chroot] Disable snap"
@@ -589,6 +590,10 @@ jobs:
             printf 'PasswordAuthentication yes\nPermitRootLogin no\n' \
               | sudo tee "$ROOTFS_MOUNT/etc/ssh/sshd_config.d/50-piano-auth.conf" > /dev/null
           fi
+
+      - name: "[chroot] display-manager 链接兜底"
+        run: |
+          sudo chroot "$ROOTFS_MOUNT" bash -c             'test -e /etc/systemd/system/display-manager.service || ln -sf /usr/lib/systemd/system/sddm.service /etc/systemd/system/display-manager.service'
 
       - name: "[chroot] Verify (gate：不过不出包)"
         run: |
