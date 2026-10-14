@@ -34,6 +34,8 @@ cp -a "$REPO_ROOT/scripts/common"       "$MOUNT/root/piano-build/"
 cp -a "$REPO_ROOT/scripts/in-chroot"    "$MOUNT/root/piano-build/"
 cp -a "$REPO_ROOT/scripts/lists"        "$MOUNT/root/piano-build/"
 cp -a "$REPO_ROOT/scripts/xdg-autostart" "$MOUNT/root/piano-build/"
+# 构建期资产（kisak-mesa.asc 等，30-device-packages.sh 要往镜像里写 apt 源与钥匙）
+cp -a "$REPO_ROOT/scripts/assets" "$MOUNT/root/piano-build/"
 chmod -R 755 "$MOUNT/root/piano-build"
 
 # 设备包 .deb 入镜像 /tmp/debs
