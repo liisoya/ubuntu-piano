@@ -54,6 +54,9 @@ iw
 kate
 kde-config-screenlocker
 kde-plasma-desktop
+# SDDM/桌面虚拟键盘（Qt6 VK；旧系统实证可用，run 38491261280 首刷缺失导致登录页无法输入）
+libqt6virtualkeyboard6
+qml6-module-qtquick-virtualkeyboard
 kdegraphics-thumbnailers
 kfind
 kimageformat6-plugins
