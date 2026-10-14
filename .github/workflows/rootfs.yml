@@ -373,6 +373,48 @@ jobs:
               --audioreach-topology workspace/audioreach-topology \
               --jobs "$(nproc)" --output out/image "${key_args[@]}"
 
+      - name: Embed initramfs into kernel (stage_images tail)
+        # ci/build.sh stage_images owns the initramfs embedding (UFS closure →
+        # build-initramfs.sh → --set-str INITRAMFS_SOURCE → rebuild Image).
+        # The workflow split called only --stage kernel and packed boot.img
+        # directly, shipping a kernel with CONFIG_INITRAMFS_SOURCE="" — no
+        # pianoinit anywhere → guaranteed panic at the forced rdinit=/pianoinit
+        # (rootfs 无 /pianoinit，boot_b ramdisk 段被 ABL 忽略；2026-10-14 实证).
+        run: |
+          set -euo pipefail
+          O="$GITHUB_WORKSPACE/workspace/linux-piano/out/rootfs-image"
+          K="$GITHUB_WORKSPACE/workspace/linux-piano"
+          OUT="$GITHUB_WORKSPACE/out/image"
+          KVER="$(cat "$O/include/config/kernel.release")"
+          [ -d "$OUT/arm64-tools" ] || debian-piano/scripts/fetch-arm64-tools.sh --output-dir "$OUT/arm64-tools"
+          # Neither UFS host nor PHY may probe before the initramfs debug network.
+          UFS_MODULES=()
+          for module in phy_qcom_qmp_ufs ufs_qcom; do
+            dependencies=$(modprobe -S "$KVER" -d "$OUT/stage/modules" --show-depends "$module")
+            while read -r kind ko rest; do
+              [ "$kind" != insmod ] || UFS_MODULES+=(--module "$ko")
+            done <<< "$dependencies"
+          done
+          [ "${#UFS_MODULES[@]}" -gt 0 ] || { echo "::error::Missing UFS module closure"; exit 1; }
+          debian-piano/scripts/build-initramfs.sh --mode rootfs \
+            --busybox "$OUT/arm64-tools/busybox" --dropbear-tree "$OUT/arm64-tools/dropbear/tree" \
+            --authorized-keys "$GITHUB_WORKSPACE/out/authorized_keys" \
+            --kernel-version "$KVER" "${UFS_MODULES[@]}" --output "$OUT/stage/initramfs.cpio.gz"
+          "$K/scripts/config" --file "$O/.config" --set-str INITRAMFS_SOURCE "$OUT/stage/initramfs.cpio.gz"
+          make -C "$K" ARCH=arm64 LLVM=1 O="$O" olddefconfig
+          for option in CONFIG_CMDLINE_FORCE=y CONFIG_EXT4_FS=y CONFIG_DRM_SIMPLEDRM=y \
+                        CONFIG_SCSI_UFSHCD=m CONFIG_SCSI_UFS_QCOM=m CONFIG_PHY_QCOM_QMP_UFS=m CONFIG_USB_CONFIGFS_NCM=y \
+                        CONFIG_PINCTRL_SM8750=m CONFIG_QCOM_GPI_DMA=m CONFIG_PHY_QCOM_QMP_PCIE=m; do
+            grep -qxF "$option" "$O/.config" || { echo "::error::Required: $option"; exit 1; }
+          done
+          before=$(stat -c%s "$O/arch/arm64/boot/Image")
+          make -C "$K" ARCH=arm64 LLVM=1 O="$O" -j"$(nproc)" Image
+          after=$(stat -c%s "$O/arch/arm64/boot/Image")
+          [ "$after" -gt "$before" ] || { echo "::error::Image did not grow; initramfs not embedded"; exit 1; }
+          [ "$(cat "$O/include/config/kernel.release")" = "$KVER" ] || { echo "::error::kernel release changed"; exit 1; }
+          grep -q 'CONFIG_INITRAMFS_SOURCE=""' "$O/.config" && { echo "::error::INITRAMFS_SOURCE still empty"; exit 1; } || true
+          echo "initramfs embedded: Image $before -> $after bytes"
+
       - name: Generate boot.img + dtbo.img (AVB)
         run: |
           O="$GITHUB_WORKSPACE/workspace/linux-piano/out/rootfs-image"

@@ -112,7 +112,25 @@ if [ "$diagnostic" = 1 ]; then
     while :; do sleep 3600; done
 fi
 # Resolve init and the ELF loader inside Debian, not against the initramfs.
-chroot /sysroot /usr/bin/test -x /sbin/init || rescue 'rootfs cannot execute /sbin/init'
+# RACE FIX (2026-10-14): the ext4 mount can return before the first large read
+# succeeds -- the UFS/SCSI stack is still settling when the partition node first
+# appears (pianoinit's own DONE ufs-host log: "probe may still be deferred").
+# The same chroot failed 88 ms after mount on two consecutive boots and passed
+# minutes later with zero dmesg I/O errors; Ubuntu resolute's /usr/bin/test is
+# a 10 MB uutils binary plus a shared-lib chain, far heavier than the old
+# rootfs' 30 kB GNU test, which is what makes this window observable.
+init_ok=0
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+    attempt=$((attempt + 1))
+    if chroot /sysroot /usr/bin/test -x /sbin/init 2>/dev/null; then
+        init_ok=1
+        break
+    fi
+    log "WAIT: /sbin/init not executable yet (attempt $attempt); storage settling"
+    sleep 1
+done
+[ "$init_ok" = 1 ] || rescue 'rootfs cannot execute /sbin/init (after 20 attempts)'
 release=$(uname -r)
 # The rootfs only has to carry this kernel's modules; a stale release stamp
 # is reported but no longer blocks the handoff, so a rebuilt kernel can boot
