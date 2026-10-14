@@ -39,8 +39,8 @@ jobs:
         run: |
           # mkbootimg 是 AOSP 的 Python 脚本，这里只做可执行位与 shebang 检查
           head -n1 mkbootimg | grep -q '^#!' || { echo "::error::mkbootimg 缺少 shebang"; exit 1; }
-          test -f sm8550.config || { echo "::error::缺少 sm8550.config"; exit 1; }
-          echo "mkbootimg / sm8550.config 就位"
+          test -f kernel/patches/series || { echo "::error::缺少 kernel/patches/series"; exit 1; }
+          echo "mkbootimg / piano 补丁集就位"
 
       - name: shellcheck
         run: |
@@ -71,7 +71,8 @@ jobs:
           for f in scripts/lists/base.list scripts/lists/gnome.list scripts/lists/kde.list; do
             test -s "$f" || { echo "::error::包列表为空: $f"; exit 1; }
           done
-          test -d alsa-xiaomi-sheng/usr/share/alsa/ucm2/Xiaomi/sheng || { echo "::error::缺少 ASoC UCM2 配置"; exit 1; }
-          test -d firmware-xiaomi-sheng/DEBIAN || { echo "::error::缺少 firmware 包骨架"; exit 1; }
-          test -d sheng-devauth/usr/lib/systemd/system || { echo "::error::缺少 sheng-devauth unit"; exit 1; }
+          test -d piano-userspace/DEBIAN || { echo "::error::缺少 piano-userspace 包树"; exit 1; }
+          test -d piano-userspace/usr/share/alsa/ucm2/Qualcomm/sm8750 || { echo "::error::缺少 ASoC UCM2 配置"; exit 1; }
+          test -d firmware-piano/DEBIAN || { echo "::error::缺少 firmware 包骨架"; exit 1; }
+          test -d scripts/in-chroot || { echo "::error::缺少 in-chroot 脚本族"; exit 1; }
           echo "包列表与设备包目录树检查通过"
