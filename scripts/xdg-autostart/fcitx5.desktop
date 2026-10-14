@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Fcitx 5
+GenericName=Input Method
+Comment=Start Input Method
+Exec=fcitx5
+Icon=fcitx
+Terminal=false
+Type=Application
+Categories=System;Utility;
+X-GNOME-Autostart-Phase=Applications
+X-GNOME-AutoRestart=false
+X-KDE-autostart-after=panel
+X-KDE-StartupNotify=false

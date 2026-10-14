@@ -8,3 +8,11 @@ konsole
 dolphin
 kate
 pipewire-alsa
+
+# piano 补充（2026-10-14 首刷教训）：
+#  - plasma-session-wayland：resolute 的 wayland 会话桌面文件载体
+#    （/usr/share/wayland-sessions/plasma.desktop），缺失 = autologin 失效
+#  - Qt6 虚拟键盘：SDDM/桌面触屏输入
+plasma-session-wayland
+libqt6virtualkeyboard6
+qml6-module-qtquick-virtualkeyboard
