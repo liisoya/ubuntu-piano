@@ -30,9 +30,10 @@ install -m644 /etc/resolv.conf "$MOUNT/etc/resolv.conf"
 
 # 构建脚本入镜像（/root/piano-build）
 install -d "$MOUNT/root/piano-build"
-cp -a "$REPO_ROOT/scripts/common"    "$MOUNT/root/piano-build/"
-cp -a "$REPO_ROOT/scripts/in-chroot" "$MOUNT/root/piano-build/"
-cp -a "$REPO_ROOT/scripts/lists"     "$MOUNT/root/piano-build/"
+cp -a "$REPO_ROOT/scripts/common"       "$MOUNT/root/piano-build/"
+cp -a "$REPO_ROOT/scripts/in-chroot"    "$MOUNT/root/piano-build/"
+cp -a "$REPO_ROOT/scripts/lists"        "$MOUNT/root/piano-build/"
+cp -a "$REPO_ROOT/scripts/xdg-autostart" "$MOUNT/root/piano-build/"
 chmod -R 755 "$MOUNT/root/piano-build"
 
 # 设备包 .deb 入镜像 /tmp/debs

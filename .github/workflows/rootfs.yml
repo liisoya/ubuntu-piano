@@ -373,15 +373,17 @@ jobs:
       - name: Pack kernel deb
         run: |
           KVER="$(cat workspace/linux-piano/out/rootfs-image/include/config/kernel.release)"
-          O="$GITHUB_WORKSPACE/workspace/linux-piano/out"
+          O="$GITHUB_WORKSPACE/workspace/linux-piano/out/rootfs-image"
           sudo -E env KVER="$KVER" \
             KERNEL_DIR="$O" \
             MODULES_DIR="$GITHUB_WORKSPACE/out/image/stage/modules" \
             DTB_DIR="$O/arch/arm64/boot/dts/qcom" \
             ./scripts/packages/build-kernel-deb.sh
           # gate：模块 vermagic 与内核版本串一致
-          V="$(modinfo -F vermagic out/image/stage/modules/lib/modules/$KVER/kernel/drivers/nvme/host/nvme.ko 2>/dev/null || true)"
-          echo "vermagic: $V"
+          KO="$(find out/image/stage/modules/lib/modules/$KVER -name '*.ko' -print -quit 2>/dev/null)"
+          [ -n "$KO" ] || { echo "::error::staging 无任何 .ko 模块"; exit 1; }
+          V="$(modinfo -F vermagic "$KO")"
+          echo "vermagic ($KO): $V"
           case "$V" in "$KVER "*) ;; *) echo "::error::vermagic 不匹配"; exit 1 ;; esac
           sudo dpkg-deb -I "linux-image-piano-kde_${KVER}_arm64.deb" > /dev/null
           echo "KVER=$KVER" >> "$GITHUB_ENV"
@@ -394,7 +396,7 @@ jobs:
           cp piano_rootfs.config.diff out/bundle/ 2>/dev/null || true
           cp kernel-patches.diff out/bundle/ 2>/dev/null || true
           {
-            echo "kernel=$(cat workspace/linux-piano/out/include/config/kernel.release)"
+            echo "kernel=$(cat workspace/linux-piano/out/rootfs-image/include/config/kernel.release)"
             echo "source=$GITHUB_WORKSPACE ${{ github.sha }}"
             echo "KUBUNTU-DIFF: root=PARTLABEL=linux-root; ext4; KDE Plasma (resolute); device-tested: no"
           } > out/bundle/MANIFEST.txt
