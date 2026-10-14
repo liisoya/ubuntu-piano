@@ -39,7 +39,7 @@ jobs:
         run: |
           # mkbootimg 是 AOSP 的 Python 脚本，这里只做可执行位与 shebang 检查
           head -n1 mkbootimg | grep -q '^#!' || { echo "::error::mkbootimg 缺少 shebang"; exit 1; }
-          test -f kernel/patches/series || { echo "::error::缺少 kernel/patches/series"; exit 1; }
+          test -f kernel/series || { echo "::error::缺少 kernel/patches/series"; exit 1; }
           echo "mkbootimg / piano 补丁集就位"
 
       - name: shellcheck
