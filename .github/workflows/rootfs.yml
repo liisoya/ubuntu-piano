@@ -118,6 +118,10 @@ env:
   ART_KERNEL_DEB: piano-kernel-deb-${{ github.sha }}
   ART_COMPONENTS: piano-components-${{ github.sha }}
   ART_DEBS: piano-debs-${{ github.sha }}
+  # 挂载点：三个 host 脚本用 ${1:-/mnt/rootfs} 兜底空参（run 38530951791 实录：
+  # 步骤 9-11 靠脚本默认值掩盖空串，步骤 14 直接 chroot "$ROOTFS_MOUNT" 才炸）。
+  # 在这里单点声明，与脚本默认值保持一致。
+  ROOTFS_MOUNT: /mnt/rootfs
 
 jobs:
   # ---------------------------------------------------------------------------
