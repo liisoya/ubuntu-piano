@@ -86,6 +86,10 @@ on:
           browser-firefox / dev-tools / docker'
         type: string
         default: 'fcitx5,compression,video-accel'
+      produce_flash_image:
+        description: '同时上传可刷写的 userdata.img（4.3GB；默认只发 tar——镜像可由 tar 确定性重建）'
+        type: boolean
+        default: false
       # --- 来源 pin ---
       kernel_source:
         description: '内核来源（当前仅 custom_build 可用）'
@@ -445,7 +449,11 @@ jobs:
 
       - name: Package flashable bundle + rootfs tarball + gates
         run: |
-          rm -f out/image/userdata.raw.img out/image/userdata.img
+          # produce_flash_image=true 保留镜像随产物上传；默认删除
+          # （镜像只是 e2fsck gate 的载体，可由 tar 确定性重建）。
+          if [ "${{ inputs.produce_flash_image }}" != true ]; then
+            rm -f out/image/userdata.raw.img out/image/userdata.img
+          fi
           debian-piano/scripts/sign-boot-avb.sh out/image/boot.img
           echo "boot.img: AVB-signed after build; sha256 $(sha256sum out/image/boot.img | cut -d' ' -f1)" >> out/image/MANIFEST.txt
           cat piano_rootfs.config.diff >> out/image/MANIFEST.txt
@@ -458,9 +466,17 @@ jobs:
           cp out/image/boot.img out/image/dtbo.img out/image/kernel.config \
              out/image/packages.txt out/image/MANIFEST.txt out/image/SOURCE-SHA256SUMS out/bundle/
           (cd out/bundle && sha256sum ./* > SHA256SUMS)
-          sudo tar --numeric-owner --xattrs --acls -C out/image/rootfs-build/rootfs \
+          # tar 打装配后的树（out/image/rootfs：含 modules/firmware/touch-view/
+          # camerad/busybox//etc/piano 标记）——此前打的是装配前基树
+          # （rootfs-build/rootfs），产出缺 /lib/modules 的 rootfs（run 38491261280
+          # 首刷触控/WiFi/NCM 全挂的根因）。
+          sudo tar --numeric-owner --xattrs --acls -C out/image/rootfs \
               -I 'zstd -T0 -3' -cf out/rootfs-tar/rootfs-kubuntu-26.04-arm64.tar.zst .
           (cd out/rootfs-tar && sha256sum ./* > SHA256SUMS)
+          if [ -f out/image/userdata.img ]; then
+            cp out/image/userdata.img out/rootfs-tar/
+            (cd out/rootfs-tar && sha256sum ./* > SHA256SUMS)
+          fi
 
       - name: Compiler cache statistics
         if: always()
