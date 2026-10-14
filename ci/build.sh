@@ -213,7 +213,7 @@ stage_images() {
     cp "$BASE/build-manifest.txt" "$OUTPUT/packages.txt"
     cp "$O/.config" "$OUTPUT/kernel.config"
     {
-        sha256sum "$ROOTCFG" "$REPO/ci/build-piano.sh"
+        sha256sum "$ROOTCFG" "$REPO/ci/build.sh"
         (cd "$D" && git ls-files -z --cached --others --exclude-standard | sort -zu | xargs -0 sha256sum)
     } > "$OUTPUT/SOURCE-SHA256SUMS"
     {
