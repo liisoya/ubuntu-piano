@@ -650,7 +650,3 @@ jobs:
           if-no-files-found: error
           compression-level: 1
           retention-days: 30
-
-        with:
-          name: piano-kde-flash-${{ github.sha }}
-          path: out/bundle-ref/
