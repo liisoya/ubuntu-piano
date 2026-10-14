@@ -109,6 +109,16 @@ permissions:
   actions: read
   packages: read
 
+# 产物名是跨 job 的契约（生产者 upload-artifact / 消费者 download-artifact 必须逐字一致），
+# 因此**只在这里声明一次**，四处引用 env.*。历史教训（run 38522113641 / 38523614571）：
+# 同一个名字在 YAML 里抄两遍就会漂移，而漂移的表现是"下载步骤静默成功、40 分钟后在
+# 下游以一条误导性错误炸掉"。
+env:
+  ART_FLASH: piano-kde-flash-${{ github.sha }}
+  ART_KERNEL_DEB: piano-kernel-deb-${{ github.sha }}
+  ART_COMPONENTS: piano-components-${{ github.sha }}
+  ART_DEBS: piano-debs-${{ github.sha }}
+
 jobs:
   # ---------------------------------------------------------------------------
   # 1) components：mesa / sensors / mipps 设备 deb（照 legacy，已验证）
@@ -194,7 +204,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: piano-components-${{ github.sha }}
+          name: ${{ env.ART_COMPONENTS }}
           path: out/
           if-no-files-found: error
           compression-level: 0
@@ -233,7 +243,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: piano-debs-${{ github.sha }}
+          name: ${{ env.ART_DEBS }}
           path: |
             piano-userspace.deb
             firmware-piano.deb
@@ -425,7 +435,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: piano-kde-flash-${{ github.sha }}
+          name: ${{ env.ART_FLASH }}
           path: out/bundle/
           if-no-files-found: error
           compression-level: 0
@@ -433,7 +443,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: piano-kernel-deb-${{ github.sha }}
+          name: ${{ env.ART_KERNEL_DEB }}
           path: linux-image-piano-kde_*.deb
           if-no-files-found: error
           compression-level: 0
@@ -477,23 +487,28 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq mmdebstrap curl git e2fsprogs zstd
 
-      - name: Download kernel deb + boot.img
+      - name: Download boot.img bundle
         uses: actions/download-artifact@v4
         with:
-          pattern: piano-kde-{flash,kernel-deb}-${{ github.sha }}
-          merge-multiple: true
+          name: ${{ env.ART_FLASH }}
+          path: out/kernel
+
+      - name: Download kernel deb
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ART_KERNEL_DEB }}
           path: out/kernel
 
       - name: Download device debs (components)
         uses: actions/download-artifact@v4
         with:
-          name: piano-components-${{ github.sha }}
+          name: ${{ env.ART_COMPONENTS }}
           path: out/components
 
       - name: Download piano debs (userspace/firmware)
         uses: actions/download-artifact@v4
         with:
-          name: piano-debs-${{ github.sha }}
+          name: ${{ env.ART_DEBS }}
           path: out/piano-debs
 
       - name: Collect all debs + derive KVER
@@ -502,8 +517,13 @@ jobs:
           find out/components out/piano-debs out/kernel -name '*.deb' -exec cp {} debs/ \;
           ls -la debs/
           [ "$(find debs -name '*.deb' | wc -l)" -ge 5 ] || { echo "::error::deb 数量不足"; exit 1; }
-          KVER="$(ls debs/linux-image-piano-kde_*.deb | head -1 | sed -E 's/.*_([^_]+)_arm64\.deb/\1/')"
-          [ -n "$KVER" ] || { echo "::error::无法从内核 deb 文件名解析 KVER"; exit 1; }
+          # 先断言"内核 deb 在不在"，再解析版本号。两类失败混进一条报错会把
+          # "上游产物缺失/名字漂移"误诊成"解析正则失效"（run 38523614571 实录：
+          # pattern 打错 → 下载空手而归 → 40 分钟后报"无法解析 KVER"）。
+          KDEB="$(ls debs/linux-image-piano-kde_*.deb 2>/dev/null | head -1 || true)"
+          [ -n "$KDEB" ] || { echo "::error::debs/ 中没有 linux-image-piano-kde_*.deb（kernel job 未产出或 artifact 下载失败）"; exit 1; }
+          KVER="$(sed -E 's/.*_([^_]+)_arm64\.deb/\1/' <<<"$KDEB")"
+          [ -n "$KVER" ] || { echo "::error::无法从内核 deb 文件名解析 KVER: $KDEB"; exit 1; }
           echo "KVER=$KVER" >> "$GITHUB_ENV"
           echo "KVER=$KVER"
 

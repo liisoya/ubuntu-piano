@@ -64,9 +64,13 @@ else
 fi
 
 # 4) 设备功能包关键文件
-for f in /usr/bin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/ssccli \
+# 路径以"哪个 deb 真的提供什么"为准（dpkg-deb -c 实证，2026-10-14）：
+#   fastrpc-support      → /usr/sbin/adsprpcd（sheng 时代的 /usr/bin/ 是旧账）
+#   piano-userspace      → /usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi（音频 UCM）
+#   piano-sensors        → adsprpcd-sensorspd.service；libssc-bin → /usr/bin/ssccli
+for f in /usr/sbin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/ssccli \
          /usr/lib/systemd/system/adsprpcd-sensorspd.service \
-         /usr/share/qcom/sm8550/Xiaomi/sheng; do
+         /usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi; do
   if [[ -e "$f" ]]; then
     pass "存在 $f"
   else

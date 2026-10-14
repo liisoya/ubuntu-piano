@@ -35,18 +35,21 @@ if ! apt_install "${debs[@]}"; then
 fi
 
 # 版本断言：GNOME 桌面会把发行版的 iio-sensor-proxy 作为 Recommends 带进来，
-# 必须以本仓库构建的 9999x 版本覆盖（发行版版没有 SSC 后端 → 传感器不工作）。
-# 这里显式断言，避免"装成了发行版版"这种 90-verify 查不出来的坏镜像。
+# 必须以我们自己的版本覆盖（发行版版没有 SSC 后端 → 传感器不工作）。
+# 合法来源有两支（run 38523614571 的 deb 清单实证）：
+#   * 9999x  —— scripts/packages/build-iio-sensor-proxy.sh 本地构建
+#   * *piano1* —— piano-sensors 仓库产物（components job 下载的 3.9-1+piano1）
 IIO_VER="$(dpkg-query -W -f='${Version}' iio-sensor-proxy 2>/dev/null || true)"
 case "$IIO_VER" in
-  "")    warn "iio-sensor-proxy 未安装（本仓库的 deb 可能没装上）" ;;
-  9999*) log "iio-sensor-proxy 使用本仓库版本: $IIO_VER" ;;
-  *)     die "iio-sensor-proxy 装成了发行版版本（$IIO_VER），不带 SSC 后端" ;;
+  "")       warn "iio-sensor-proxy 未安装（本仓库的 deb 可能没装上）" ;;
+  9999*)    log "iio-sensor-proxy 使用本仓库版本: $IIO_VER" ;;
+  *piano1*) log "iio-sensor-proxy 使用 piano-sensors 版本: $IIO_VER" ;;
+  *)        die "iio-sensor-proxy 装成了发行版版本（$IIO_VER），不带 SSC 后端" ;;
 esac
 
 # 权限修复：dpkg-deb 打包时统一 644，可执行文件需要显式补权限
 log "修复可执行权限"
-for f in /usr/bin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/monitor-sensor /usr/bin/ssccli; do
+for f in /usr/sbin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/monitor-sensor /usr/bin/ssccli; do
   if [[ -e "$f" ]]; then
     chmod +x "$f"
     printf '    +x %s\n' "$f"
